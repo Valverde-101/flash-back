@@ -159,6 +159,7 @@ function publicGame(g) {
     title: g.title,
     description: g.description,
     cover: g.cover || null,
+    coverSource: g.coverSource || null,
     coverVersion: g.coverVersion || 0,
     tags: g.tags || [],
   };
@@ -555,8 +556,13 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
   fs.mkdirSync(GAMES_DIR, { recursive: true });
   fs.writeFileSync(path.join(GAMES_DIR, filename), found.buffer);
 
-  const logoBuffer = await flashpoint.fetchLogo(id);
-  const coverExt = logoBuffer && detectImageExt(logoBuffer) ? saveCover(COVERS_DIR, slug, logoBuffer) : null;
+  let coverBuffer = await flashpoint.fetchScreenshot(id);
+  let coverSource = coverBuffer && detectImageExt(coverBuffer) ? "flashpoint-screenshot" : null;
+  if (!coverSource) {
+    coverBuffer = await flashpoint.fetchLogo(id);
+    coverSource = coverBuffer && detectImageExt(coverBuffer) ? "flashpoint-logo" : null;
+  }
+  const coverExt = coverSource ? saveCover(COVERS_DIR, slug, coverBuffer) : null;
 
   // Best-effort: some games need a sidecar file (XML config, level list...)
   // fetched from the same directory as their .swf at runtime. A missing one
@@ -585,7 +591,9 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
     file: filename,
     sizeBytes: found.buffer.length,
     cover: coverExt,
+    coverSource,
     coverVersion: coverExt ? Date.now() : 0,
+    flashpointId: id,
     tags: [],
   };
 
@@ -623,11 +631,38 @@ app.post(
     }
 
     game.cover = saveCover(COVERS_DIR, game.slug, req.file.buffer);
+    game.coverSource = req.body?.source === "game-capture" ? "game-capture" : "upload";
     game.coverVersion = Date.now();
     saveCatalog(catalog);
     res.json(game);
   }
 );
+
+app.post("/api/admin/games/:slug/flashpoint-cover", auth.requireAdminApi, async (req, res) => {
+  const catalog = loadCatalog();
+  const game = catalog.find((g) => g.slug === req.params.slug);
+  if (!game) return res.status(404).json({ error: "game_not_found" });
+
+  const kind = req.body.kind;
+  if (kind !== "screenshot" && kind !== "logo") {
+    return res.status(400).json({ error: "invalid_cover_source" });
+  }
+  if (!flashpoint.isFlashpointId(game.flashpointId)) {
+    return res.status(409).json({ error: "flashpoint_source_missing" });
+  }
+
+  const image = kind === "screenshot"
+    ? await flashpoint.fetchScreenshot(game.flashpointId)
+    : await flashpoint.fetchLogo(game.flashpointId);
+  const ext = image && detectImageExt(image);
+  if (!ext) return res.status(404).json({ error: "flashpoint_cover_unavailable" });
+
+  game.cover = saveCover(COVERS_DIR, game.slug, image);
+  game.coverSource = `flashpoint-${kind}`;
+  game.coverVersion = Date.now();
+  saveCatalog(catalog);
+  res.json(game);
+});
 
 app.put("/api/admin/games/:slug/tags", auth.requireAdminApi, (req, res) => {
   const catalog = loadCatalog();
@@ -649,10 +684,13 @@ app.put("/api/admin/games/:slug", auth.requireAdminApi, (req, res) => {
   if (typeof req.body.title === "string") {
     const title = req.body.title.trim();
     if (!title) return res.status(400).json({ error: "title_required" });
+    if (title.length > 100) return res.status(400).json({ error: "title_too_long" });
     game.title = title;
   }
   if (typeof req.body.description === "string") {
-    game.description = req.body.description.trim();
+    const description = req.body.description.trim();
+    if (description.length > 500) return res.status(400).json({ error: "description_too_long" });
+    game.description = description;
   }
   if (req.body.renderer === "auto" || req.body.renderer === "canvas") {
     game.renderer = req.body.renderer;

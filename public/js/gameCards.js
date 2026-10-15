@@ -14,6 +14,7 @@ function buildGameCard(game) {
 
   const cover = document.createElement("div");
   cover.className = "card-cover";
+  if (game.coverSource === "flashpoint-logo") cover.classList.add("logo-cover");
   if (game.cover) {
     cover.classList.add("has-image");
     const img = document.createElement("img");
@@ -21,6 +22,14 @@ function buildGameCard(game) {
     img.alt = game.title;
     img.loading = "lazy";
     img.decoding = "async";
+    img.onerror = () => {
+      cover.classList.remove("has-image", "logo-cover");
+      img.remove();
+      const hue = hashHue(game.slug);
+      cover.style.setProperty("--hue1", `hsl(${hue}, 70%, 55%)`);
+      cover.style.setProperty("--hue2", `hsl(${(hue + 60) % 360}, 70%, 55%)`);
+      cover.textContent = game.title.slice(0, 1).toUpperCase();
+    };
     cover.appendChild(img);
   } else {
     const hue = hashHue(game.slug);

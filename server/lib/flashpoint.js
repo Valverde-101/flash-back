@@ -344,6 +344,10 @@ function logoUrl(id) {
   return `https://infinity.unstable.life/images/Logos/${id.slice(0, 2)}/${id.slice(2, 4)}/${id}.png?type=jpg`;
 }
 
+function screenshotUrl(id) {
+  return `https://infinity.unstable.life/images/Screenshots/${id.slice(0, 2)}/${id.slice(2, 4)}/${id}.png?type=jpg`;
+}
+
 // Search the same public database API used by FlashpointProject's own
 // flashpoint-database site. Keep the old HTML page as a graceful search
 // fallback if that API is temporarily unavailable.
@@ -760,8 +764,17 @@ async function fetchSidecarAssets(swfBuffer, sourceUrl) {
 // candidate-list/fallback treatment as the .swf itself). Returns null on
 // any failure — a missing cover is never a reason to fail the import.
 async function fetchLogo(id) {
+  return fetchEntryImage(id, logoUrl);
+}
+
+async function fetchScreenshot(id) {
+  return fetchEntryImage(id, screenshotUrl);
+}
+
+async function fetchEntryImage(id, urlBuilder) {
+  if (!isFlashpointId(id)) return null;
   try {
-    return await fetchBuffer(logoUrl(id), MAX_RESPONSE_BYTES.logo);
+    return await fetchBuffer(urlBuilder(id), MAX_RESPONSE_BYTES.logo);
   } catch (err) {
     return null;
   }
@@ -773,6 +786,7 @@ module.exports = {
   fetchFirstValidSwf,
   fetchGameZipSwf,
   isFlashpointId,
+  fetchScreenshot,
   fetchLogo,
   fetchSidecarAssets,
   trySearchSlot,

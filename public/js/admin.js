@@ -108,31 +108,117 @@ function buildCoverUploaderBase({ imageUrl, alt, initial, title }) {
 }
 
 function buildCoverUploader(game) {
-  const { wrap, input } = buildCoverUploaderBase({
-    imageUrl: game.cover ? `covers/${game.slug}.${game.cover}?t=${Date.now()}` : null,
-    alt: game.title,
-    initial: game.title.slice(0, 1).toUpperCase(),
-    title: t("change_cover_title"),
-  });
+  const wrap = document.createElement("section");
+  wrap.className = "game-cover-editor";
+
+  const preview = document.createElement("div");
+  preview.className = "game-cover-preview";
+  if (game.cover) {
+    const image = document.createElement("img");
+    image.src = `covers/${encodeURIComponent(game.slug)}.${encodeURIComponent(game.cover)}?v=${game.coverVersion || 0}`;
+    image.alt = game.title;
+    if (game.coverSource === "flashpoint-logo") image.classList.add("logo-cover-image");
+    image.onerror = () => {
+      preview.replaceChildren();
+      preview.classList.add("is-empty");
+      preview.textContent = game.title.slice(0, 1).toUpperCase();
+    };
+    preview.appendChild(image);
+  } else {
+    preview.classList.add("is-empty");
+    preview.textContent = game.title.slice(0, 1).toUpperCase();
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "game-cover-actions";
+  const upload = document.createElement("button");
+  upload.type = "button";
+  upload.className = "game-cover-action";
+  upload.innerHTML = iconSvg("image") + " " + t("cover_upload");
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".jpg,.jpeg,.png,.webp";
+  input.className = "hidden";
+  input.setAttribute("aria-label", t("cover_upload"));
+  upload.addEventListener("click", () => input.click());
+
+  const status = document.createElement("span");
+  status.className = "upload-status game-cover-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+
+  const source = document.createElement("span");
+  source.className = "game-cover-source-label";
+  const sourceKey = (game.coverSource || "unknown").replace(/-/g, "_");
+  source.textContent = t(`cover_source_${sourceKey}`);
 
   input.addEventListener("change", async () => {
     if (!input.files[0]) return;
     const formData = new FormData();
+    formData.append("source", "upload");
     formData.append("cover", input.files[0]);
-
-    const res = await af(`/api/admin/games/${encodeURIComponent(game.slug)}/cover`, {
-      method: "POST",
-      body: formData,
-    });
-
-    if (res.ok) {
-      loadGames();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error ? tError(data.error) : t("error_uploading_cover"));
+    actions.querySelectorAll("button").forEach((item) => (item.disabled = true));
+    status.textContent = t("cover_updating");
+    status.className = "upload-status game-cover-status";
+    try {
+      const res = await af(`/api/admin/games/${encodeURIComponent(game.slug)}/cover`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        await loadGames();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        status.textContent = data.error ? tError(data.error) : t("error_uploading_cover");
+        status.classList.add("error");
+      }
+    } catch (error) {
+      status.textContent = t("error_uploading_cover");
+      status.classList.add("error");
+    } finally {
+      actions.querySelectorAll("button").forEach((item) => (item.disabled = false));
+      input.value = "";
     }
   });
 
+  actions.append(upload, input);
+
+  if (game.flashpointId) {
+    for (const kind of ["screenshot", "logo"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "game-cover-action game-cover-source";
+      button.textContent = kind === "screenshot" ? t("cover_use_screenshot") : t("cover_use_logo");
+      button.addEventListener("click", async () => {
+        actions.querySelectorAll("button").forEach((item) => (item.disabled = true));
+        status.textContent = t("cover_updating");
+        status.className = "upload-status game-cover-status";
+        try {
+          const res = await af(`/api/admin/games/${encodeURIComponent(game.slug)}/flashpoint-cover`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind }),
+          });
+          if (res.ok) {
+            await loadGames();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            status.textContent = data.error ? tError(data.error) : t("error_uploading_cover");
+            status.classList.add("error");
+          }
+        } catch (error) {
+          status.textContent = t("error_uploading_cover");
+          status.classList.add("error");
+        } finally {
+          actions.querySelectorAll("button").forEach((item) => (item.disabled = false));
+        }
+      });
+      actions.appendChild(button);
+    }
+  }
+
+  wrap.append(preview, source, actions, status);
   return wrap;
 }
 
@@ -144,26 +230,62 @@ function buildInfoEditor(game) {
   titleInput.type = "text";
   titleInput.className = "title-input";
   titleInput.value = game.title;
+  titleInput.maxLength = 100;
+  titleInput.setAttribute("aria-label", t("label_title"));
 
-  const descInput = document.createElement("input");
-  descInput.type = "text";
+  const titleLabel = document.createElement("label");
+  titleLabel.className = "info-editor-label";
+  titleLabel.textContent = t("label_title");
+  const descLabel = document.createElement("label");
+  descLabel.className = "info-editor-label";
+  descLabel.textContent = t("label_description_optional");
+
+  const descInput = document.createElement("textarea");
   descInput.className = "description-input";
   descInput.placeholder = t("description_placeholder");
+  descInput.rows = 4;
+  descInput.maxLength = 500;
   descInput.value = game.description || "";
+  descInput.setAttribute("aria-label", t("label_description_optional"));
+  const descCount = document.createElement("span");
+  descCount.className = "description-count";
+  const updateDescriptionCount = () => {
+    descCount.textContent = t("description_count", { count: descInput.value.length, max: descInput.maxLength });
+  };
+  descInput.addEventListener("input", updateDescriptionCount);
+  updateDescriptionCount();
+  const saveStatus = document.createElement("span");
+  saveStatus.className = "upload-status metadata-status";
+  saveStatus.setAttribute("role", "status");
+  saveStatus.setAttribute("aria-live", "polite");
 
   async function save(body, revert) {
-    const res = await af(`/api/admin/games/${encodeURIComponent(game.slug)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    saveStatus.textContent = t("metadata_saving");
+    saveStatus.className = "upload-status metadata-status";
+    try {
+      const res = await af(`/api/admin/games/${encodeURIComponent(game.slug)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (res.ok) {
-      const updated = await res.json();
-      Object.assign(game, updated);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error ? tError(data.error) : t("error_saving_game_info"));
+      if (res.ok) {
+        const updated = await res.json();
+        Object.assign(game, updated);
+        saveStatus.textContent = t("metadata_saved");
+        saveStatus.classList.add("success");
+        setTimeout(() => {
+          if (saveStatus.textContent === t("metadata_saved")) saveStatus.textContent = "";
+        }, 1800);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        saveStatus.textContent = data.error ? tError(data.error) : t("error_saving_game_info");
+        saveStatus.classList.add("error");
+        revert();
+      }
+    } catch (error) {
+      saveStatus.textContent = t("error_saving_game_info");
+      saveStatus.classList.add("error");
       revert();
     }
   }
@@ -196,7 +318,9 @@ function buildInfoEditor(game) {
     save({ renderer: newRenderer }, () => (rendererCheckbox.checked = game.renderer !== "canvas"));
   });
 
-  wrap.append(titleInput, descInput, rendererLabel);
+  titleLabel.appendChild(titleInput);
+  descLabel.append(descInput, descCount);
+  wrap.append(titleLabel, descLabel, saveStatus, rendererLabel);
   return wrap;
 }
 

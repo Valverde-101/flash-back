@@ -480,6 +480,7 @@ captureCoverBtn.addEventListener("click", async () => {
     if (!blob) throw new Error("canvas.toBlob returned null");
 
     const formData = new FormData();
+    formData.append("source", "game-capture");
     formData.append("cover", blob, "capture.jpg");
 
     const res = await fetch(`/api/admin/games/${encodeURIComponent(slug)}/cover`, {
