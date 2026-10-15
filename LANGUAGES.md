@@ -2,11 +2,11 @@
 
 # Adding a language
 
-FlashBack's UI text lives in a single dictionary file, `public/js/i18n.js`. No build step, no `.json` files fetched over the network, no server-side rendering involved. Default language is **English** (`en`); **Portuguese** (`pt`) is the second one.
+FlashBack's UI text lives in a single dictionary file, `public/js/i18n.js`. No build step, no `.json` files fetched over the network, no server-side rendering involved. Default language is **English** (`en`); **Portuguese** (`pt`) and **Spanish** (`es`) are also available.
 
 ## How it works
 
-1. `TRANSLATIONS` in `public/js/i18n.js` is a plain object: `{ en: { key: "text", ... }, pt: { key: "texto", ... } }`.
+1. `TRANSLATIONS` in `public/js/i18n.js` is a plain object with a complete set of UI strings for every installed language.
 2. `LANGUAGES` (top of the same file) lists the installed languages. This populates the language `<select>` in the top bar of every page.
 3. Static text in HTML is marked with `data-i18n="key"` (sets `textContent`), `data-i18n-html="key"` (sets `innerHTML`, only used for the footer credits, which contain links), `data-i18n-placeholder="key"` (input placeholders) or `data-i18n-title="key"` (tooltip `title` attributes).
 4. Each page's own script calls `initLangToggle(selectEl)` on load, which populates the dropdown, applies the saved language (or English by default) to every `data-i18n*` element, and wires up the `<select>`.
@@ -28,15 +28,15 @@ Lookup order for `t()`: current language, then English, then the raw key itself 
 
 ## Server error codes
 
-The API never returns UI text, validation errors come back as short codes, e.g. `{"error": "title_required"}`. The frontend translates them via `tError(code)`, which looks up `err_<code>` in the dictionary. If you add a new validation error on the server (`server/index.js`), give it a `snake_case` code and add matching `err_<code>` entries to **both** languages in `i18n.js`, otherwise it'll just display the raw code as a fallback, which is ugly but never crashes.
+The API never returns UI text, validation errors come back as short codes, e.g. `{"error": "title_required"}`. The frontend translates them via `tError(code)`, which looks up `err_<code>` in the dictionary. If you add a new validation error on the server (`server/index.js`), give it a `snake_case` code and add matching `err_<code>` entries to every installed language in `i18n.js`; otherwise it'll display the raw code as a fallback.
 
 ## Adding a new language
 
-1. Add a block to `TRANSLATIONS` in `public/js/i18n.js`, e.g. for Spanish:
+1. Add a complete block to `TRANSLATIONS` in `public/js/i18n.js` for the new language (for example, French):
    ```js
-   es: {
-     tag_all: "Todos",
-     nav_all_games: "Todos los juegos",
+   fr: {
+     tag_all: "Tout",
+     nav_all_games: "Tous les jeux",
      // ...every other key from the "en" block, translated
    },
    ```
@@ -46,14 +46,14 @@ The API never returns UI text, validation errors come back as short codes, e.g. 
    const LANGUAGES = [
      { id: "en", name: "English" },
      { id: "pt", name: "Português" },
-     { id: "es", name: "Español" }, // <-- add this
+     { id: "fr", name: "Français" }, // <-- add this
    ];
    ```
 3. Reload any page: the new language shows up in the dropdown immediately.
 
 ## Adding a new translatable string
 
-1. Add the key to **both** language blocks in `i18n.js` (English first, as the fallback).
+1. Add the key to **every** language block in `i18n.js` (English first, as the fallback).
 2. In HTML, use `data-i18n="your_key"` (or the `-html`/`-placeholder`/`-title` variant) on the element, and keep a sensible English default as its literal content/attribute, that way the page still reads correctly even if JS fails to load.
 3. In JS, call `t("your_key")` instead of hardcoding text. If the string appears inside an element built dynamically (tables, cards, chips), make sure it gets rebuilt in `onLanguageChange()` too, or it'll stay in the old language until the next reload.
 

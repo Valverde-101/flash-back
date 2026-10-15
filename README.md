@@ -35,7 +35,7 @@ The library starts out empty. Add games yourself, either by uploading your own `
 - **Cross-device saves**: pick a no-password household profile on the play page and game saves (Flash's `SharedObject`) follow you to any browser on the network, instead of being stuck on one device (see [Cross-device saves](#cross-device-saves) below)
 - **Gamepad support**: use a controller with games that only ever supported keyboard, with a per-game remap panel — since old Flash games never agreed on a control scheme (Z/X, A/S, Ctrl/Alt, arrows...), you press the button you want and pick what key it becomes (see [Gamepad support](#gamepad-support) below)
 - **Swappable themes** via plain CSS files (see [THEMES.md](THEMES.md)), ships with Dark Neon, Light Neon, Geo (Y2K) and NES (8-bit)
-- **Multi-language UI** (English default, Portuguese included) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
+- **Multi-language UI** (English default, with Portuguese and Spanish) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
 - **Admin panel** to upload your own `.swf` games and cover art, protected by a real login (not the browser's native Basic Auth popup)
 - **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources. Sidecar files are not bundled, so some games may need their extra files copied separately.
 - **Import from Flashpoint Archive**: search by name, try the original game link, and use Flashpoint's archived GameZIP as a fallback when that link is offline (see [Importing from Flashpoint Archive](#importing-from-flashpoint-archive) below)
