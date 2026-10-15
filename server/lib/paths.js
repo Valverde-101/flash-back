@@ -12,6 +12,7 @@ const GAMES_DIR = path.resolve(
 );
 const CATALOG_PATH = path.join(DATA_DIR, "catalog.json");
 const COLLECTIONS_PATH = path.join(DATA_DIR, "collections.json");
+const SOURCES_PATH = path.join(DATA_DIR, "sources.json");
 const FAVORITES_PATH = path.join(DATA_DIR, "favorites.json");
 const ADMIN_PATH = path.join(DATA_DIR, "admin.json");
 const PROFILES_PATH = path.join(DATA_DIR, "profiles.json");
@@ -30,6 +31,7 @@ module.exports = {
   GAMES_DIR,
   CATALOG_PATH,
   COLLECTIONS_PATH,
+  SOURCES_PATH,
   FAVORITES_PATH,
   ADMIN_PATH,
   PROFILES_PATH,

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SWF Sources — FlashBack</title>
+  <link rel="icon" href="images/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="images/icon-192.png" />
+  <link rel="stylesheet" href="css/themes/dark.css" id="theme-link" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script>
+    (function () {
+      var saved = localStorage.getItem("flashback:theme");
+      if (saved) document.getElementById("theme-link").href = "css/themes/" + saved + ".css";
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <h1><a href="/" class="logo-link"><img src="images/logo.png" alt="FlashBack" class="site-logo" /></a></h1>
+    <nav class="main-nav">
+      <a href="/" data-i18n="nav_all_games">All games</a>
+      <a href="collections" data-i18n="nav_collections">Collections</a>
+      <a href="favorites" data-i18n="nav_favorites">Favorites</a>
+      <a href="sources" class="active" data-i18n="nav_sources">SWF Sources</a>
+      <a href="admin#upload-form" class="nav-import-link" data-i18n="import_games">Import games</a>
+    </nav>
+    <button id="logout-btn" class="logout-btn" data-i18n="logout">Log out</button>
+    <select id="lang-select" class="theme-select"></select>
+    <select id="theme-select" class="theme-select"></select>
+  </header>
+
+  <main class="sources-main">
+    <section class="sources-intro">
+      <h2 data-i18n="sources_title">SWF sources</h2>
+      <p data-i18n="sources_help">Save websites where you find SWF games. Open a source, download a game file, then upload it to your library.</p>
+    </section>
+
+    <section class="admin-panel source-form-panel">
+      <h2 id="source-form-heading" data-i18n="sources_add_heading">Add a source</h2>
+      <form id="source-form" class="source-form">
+        <label>
+          <span data-i18n="sources_name">Source name</span>
+          <input type="text" name="name" id="source-name" maxlength="100" required />
+        </label>
+        <label>
+          <span data-i18n="sources_url">Website URL</span>
+          <input type="url" name="url" id="source-url" placeholder="https://example.com/games" maxlength="2048" required />
+        </label>
+        <label>
+          <span data-i18n="sources_type">Source type</span>
+          <select name="type" id="source-type">
+            <option value="catalog" data-i18n="sources_type_catalog">Game catalog or search</option>
+            <option value="playable" data-i18n="sources_type_playable">Games playable on the website</option>
+            <option value="direct-swf" data-i18n="sources_type_direct_swf">Direct SWF downloads</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="sources_tags">Tags (optional, comma-separated)</span>
+          <input type="text" name="tags" id="source-tags" maxlength="500" data-i18n-placeholder="sources_tags_placeholder" placeholder="platform, genre, language" />
+        </label>
+        <label class="source-notes-field">
+          <span data-i18n="sources_notes">Notes (optional)</span>
+          <textarea name="notes" id="source-notes" rows="3" maxlength="1000" data-i18n-placeholder="sources_notes_placeholder" placeholder="What can you find here? Any useful search tips?"></textarea>
+        </label>
+        <div class="source-form-actions">
+          <button type="submit" id="source-save-btn" data-i18n="sources_save">Save source</button>
+          <button type="button" id="source-cancel-btn" class="secondary-btn hidden" data-i18n="sources_cancel">Cancel</button>
+        </div>
+        <p id="source-form-status" class="upload-status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section class="source-browser-panel">
+      <div class="source-browser-toolbar">
+        <input id="source-search" type="search" data-i18n-placeholder="sources_search" placeholder="Search saved sources..." autocomplete="off" />
+        <select id="source-filter" class="theme-select" aria-label="Filter sources">
+          <option value="all" data-i18n="sources_filter_all">All sources</option>
+          <option value="active" data-i18n="sources_filter_active">Active</option>
+          <option value="inactive" data-i18n="sources_filter_inactive">Inactive</option>
+        </select>
+      </div>
+      <p id="source-count" class="source-count" role="status"></p>
+      <div id="sources-list" class="source-list"></div>
+      <p id="sources-empty" class="empty hidden" data-i18n="sources_empty">No SWF sources have been saved yet.</p>
+      <p id="sources-no-match" class="empty hidden" data-i18n="sources_no_match">No sources match this search or filter.</p>
+      <p id="sources-load-error" class="library-status error hidden" role="alert"></p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p><a href="admin" data-i18n="admin_link">Administration</a></p>
+  </footer>
+
+  <script src="js/icons.js"></script>
+  <script src="js/themes-registry.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/sources.js"></script>
+</body>
+</html>

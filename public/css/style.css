@@ -1477,6 +1477,243 @@ main {
   box-shadow: 0 0 calc(10px * var(--glow-strength) + 1px) rgba(var(--accent-rgb), var(--glow-strength));
 }
 
+/* Curated SWF source library */
+.sources-main {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sources-intro h2 {
+  margin: 0 0 8px;
+  font-size: 1.55rem;
+}
+
+.sources-intro p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.source-form-panel h2 { margin-bottom: 16px; }
+
+.source-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.source-form label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.source-form input,
+.source-form select,
+.source-form textarea,
+.source-browser-toolbar input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.source-form textarea { resize: vertical; }
+.source-form input:focus,
+.source-form select:focus,
+.source-form textarea:focus,
+.source-browser-toolbar input:focus {
+  outline: 2px solid rgba(var(--accent-rgb), 0.45);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.source-notes-field { grid-column: 1 / -1; }
+
+.source-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.source-form-actions button,
+.source-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
+}
+
+.source-form-actions button[type="submit"],
+.source-open-btn {
+  border-color: transparent;
+  background: linear-gradient(120deg, var(--accent), var(--accent2));
+  color: #fff;
+}
+
+.source-action-btn:hover,
+.source-form-actions button:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.source-action-btn:disabled,
+.source-form-actions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.source-delete-btn { color: var(--danger); }
+
+.source-form #source-form-status {
+  grid-column: 1 / -1;
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--success, var(--accent));
+  font-size: 0.88rem;
+}
+
+.source-form #source-form-status.error { color: var(--danger); }
+
+.source-browser-panel {
+  min-width: 0;
+}
+
+.source-browser-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+  gap: 10px;
+}
+
+.source-count {
+  margin: 13px 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.source-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+  gap: 12px;
+}
+
+.source-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.source-card:hover { border-color: var(--accent); }
+.source-card.is-inactive { opacity: 0.72; }
+.source-card-content { min-width: 0; }
+
+.source-card-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.source-card-title-row h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+.source-url {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--accent2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.source-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.source-type-pill,
+.source-tag,
+.source-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.source-type-pill { color: var(--text); border-color: rgba(var(--accent-rgb), 0.45); }
+.source-status-pill { color: var(--danger); }
+.source-notes {
+  margin: 12px 0 0;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.source-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.source-card-actions .source-action-btn {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+}
+
+.source-browser-panel > .empty,
+.source-browser-panel > .library-status {
+  margin-left: 0;
+  margin-right: 0;
+}
+
 /* Mobile: the topbar can carry a lot of controls (nav, capture, gamepad,
    CRT, filters, fullscreen, profile, language, theme) — none of it fits on
    a phone in one row. Letting it wrap (above) already kills the horizontal
@@ -1498,7 +1735,16 @@ main {
   .main-nav {
     flex: 1 1 100%;
     justify-content: center;
+    flex-wrap: wrap;
   }
+
+  .sources-main { padding: 22px 16px 36px; }
+  .source-form { grid-template-columns: minmax(0, 1fr); }
+  .source-notes-field,
+  .source-form-actions,
+  .source-form #source-form-status { grid-column: 1; }
+  .source-browser-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .source-card-actions .source-action-btn { flex: 1 1 auto; }
 
   .topbar select,
   .topbar button {

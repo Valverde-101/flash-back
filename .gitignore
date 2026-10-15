@@ -6,6 +6,7 @@ data/covers/*
 data/admin.json
 data/catalog.json
 data/collections.json
+data/sources.json
 data/profiles.json
 data/saves/
 data/game-assets/

@@ -63,6 +63,7 @@ const {
   GAMES_DIR,
   CATALOG_PATH,
   COLLECTIONS_PATH,
+  SOURCES_PATH,
   FAVORITES_PATH,
   GAME_ASSETS_DIR,
   COVERS_DIR,
@@ -127,6 +128,79 @@ function loadCollections() {
 
 function saveCollections(collections) {
   writeJson(COLLECTIONS_PATH, collections);
+}
+
+function loadSources() {
+  return readJson(SOURCES_PATH, [], Array.isArray);
+}
+
+function saveSources(sources) {
+  writeJson(SOURCES_PATH, sources);
+}
+
+const SOURCE_TYPES = new Set(["catalog", "playable", "direct-swf"]);
+
+function parseSourceInput(body) {
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!name) return { error: "source_name_required" };
+  if (name.length > 100) return { error: "source_name_too_long" };
+
+  const rawUrl = typeof body?.url === "string" ? body.url.trim() : "";
+  if (!rawUrl || rawUrl.length > 2048) return { error: "source_url_invalid" };
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (error) {
+    return { error: "source_url_invalid" };
+  }
+  if (!["http:", "https:"].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+    return { error: "source_url_invalid" };
+  }
+
+  const type = typeof body?.type === "string" ? body.type : "catalog";
+  if (!SOURCE_TYPES.has(type)) return { error: "source_type_invalid" };
+
+  const notes = typeof body?.notes === "string" ? body.notes.trim() : "";
+  if (notes.length > 1000) return { error: "source_notes_too_long" };
+  const rawTags = Array.isArray(body?.tags)
+    ? body.tags
+    : typeof body?.tags === "string"
+      ? body.tags.split(",")
+      : [];
+  const tags = [...new Set(
+    rawTags
+      .map((tag) => String(tag).trim().toLocaleLowerCase().slice(0, 40))
+      .filter(Boolean)
+  )].slice(0, 20);
+
+  return {
+    value: {
+      name,
+      url: parsedUrl.toString(),
+      type,
+      notes,
+      tags,
+      active: typeof body.active === "boolean" ? body.active : true,
+    },
+  };
+}
+
+function sourceUrlKey(rawUrl) {
+  const url = new URL(rawUrl);
+  url.hash = "";
+  if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString();
+}
+
+function hasDuplicateSourceUrl(sources, urlKey, exceptIndex = -1) {
+  return sources.some((source, index) => {
+    if (index === exceptIndex) return false;
+    try {
+      return sourceUrlKey(source.url) === urlKey;
+    } catch (error) {
+      return false;
+    }
+  });
 }
 
 function uniqueSlug(existingSlugs, baseSlug) {
@@ -409,6 +483,61 @@ app.get("/api/collections/:slug", (req, res) => {
 // play.html) to decide whether to show admin-only controls like the cover
 // capture button.
 app.get("/api/admin/session", auth.requireAdminApi, (req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/sources", auth.requireAdminApi, (req, res) => {
+  const sources = loadSources().sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  res.json(sources);
+});
+
+app.post("/api/admin/sources", requireSameOrigin, auth.requireAdminApi, (req, res) => {
+  const parsed = parseSourceInput(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const sources = loadSources();
+  const urlKey = sourceUrlKey(parsed.value.url);
+  if (hasDuplicateSourceUrl(sources, urlKey)) {
+    return res.status(409).json({ error: "source_url_duplicate" });
+  }
+
+  const now = new Date().toISOString();
+  const source = { id: crypto.randomUUID(), ...parsed.value, createdAt: now, updatedAt: now };
+  sources.push(source);
+  saveSources(sources);
+  res.status(201).json(source);
+});
+
+app.put("/api/admin/sources/:id", requireSameOrigin, auth.requireAdminApi, (req, res) => {
+  const sources = loadSources();
+  const index = sources.findIndex((source) => source.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: "source_not_found" });
+
+  const parsed = parseSourceInput({ ...sources[index], ...req.body });
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const urlKey = sourceUrlKey(parsed.value.url);
+  if (hasDuplicateSourceUrl(sources, urlKey, index)) {
+    return res.status(409).json({ error: "source_url_duplicate" });
+  }
+
+  sources[index] = {
+    ...sources[index],
+    ...parsed.value,
+    updatedAt: new Date().toISOString(),
+  };
+  saveSources(sources);
+  res.json(sources[index]);
+});
+
+app.delete("/api/admin/sources/:id", requireSameOrigin, auth.requireAdminApi, (req, res) => {
+  const sources = loadSources();
+  const index = sources.findIndex((source) => source.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: "source_not_found" });
+  sources.splice(index, 1);
+  saveSources(sources);
   res.json({ ok: true });
 });
 
@@ -1142,6 +1271,10 @@ app.get("/setup", (req, res) => {
 
 app.get("/admin", auth.requireAdminPage, (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "admin.html"));
+});
+
+app.get("/sources", auth.requireAdminPage, (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "sources.html"));
 });
 
 const CLEAN_PAGES = {
