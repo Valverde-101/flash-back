@@ -55,6 +55,12 @@
           <span data-i18n="label_tags_optional">Tags (optional, comma-separated)</span>
           <input type="text" id="game-tags" name="tags" data-i18n-placeholder="tags_input_placeholder" placeholder="action, platformer, classic" />
         </label>
+        <label>
+          <span data-i18n="label_source_optional">Source website (optional)</span>
+          <select id="source-select" name="sourceId">
+            <option value="" data-i18n="source_none">No source recorded</option>
+          </select>
+        </label>
         <button type="submit" id="submit-btn" data-i18n="submit_game">Submit game</button>
         <p id="upload-status" class="upload-status"></p>
       </form>
@@ -98,6 +104,20 @@
       <h2 data-i18n="registered_games_heading">Registered games</h2>
       <div id="games-list" class="games-list"></div>
       <p id="games-empty" class="empty hidden" data-i18n="empty_games">No games found.</p>
+    </section>
+
+    <section class="admin-panel backup-panel">
+      <h2 data-i18n="backup_heading">Backup and restore</h2>
+      <p data-i18n="backup_help">Download a portable backup with your games and library data. Restore replaces that library data but keeps your admin account and login session.</p>
+      <a class="backup-download-btn" href="/api/admin/backup" data-i18n="backup_download">Download backup</a>
+      <form id="backup-restore-form" class="backup-restore-form">
+        <label>
+          <span data-i18n="backup_file_label">Backup file (.tar.gz)</span>
+          <input id="backup-file" type="file" name="backup" accept=".tar.gz,.tgz,application/gzip" required />
+        </label>
+        <button id="backup-restore-btn" type="submit" data-i18n="backup_restore">Restore backup</button>
+        <p id="backup-restore-status" class="upload-status" role="status" aria-live="polite"></p>
+      </form>
     </section>
   </main>
 

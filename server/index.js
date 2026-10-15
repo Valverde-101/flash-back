@@ -9,6 +9,8 @@ const { detectImageExt } = require("./lib/validateImage");
 const { slugify } = require("./lib/slugify");
 const auth = require("./lib/auth");
 const flashpoint = require("./lib/flashpoint");
+const swfAnalysis = require("./lib/swfAnalysis");
+const backupArchive = require("./lib/backupArchive");
 const profiles = require("./lib/profiles");
 const favorites = require("./lib/favorites");
 const paths = require("./lib/paths");
@@ -57,6 +59,10 @@ const MAX_SIDECAR_FILE_BYTES = Math.min(
   boundedNumberEnv("MAX_SIDECAR_FILE_MB", 8, 0.01, 512) * MIB,
   Math.floor(MAX_MULTIPART_FILE_BUDGET / MAX_SIDECAR_FILES)
 );
+const GIB = 1024 * MIB;
+const MAX_BACKUP_UPLOAD_BYTES = boundedNumberEnv("MAX_BACKUP_UPLOAD_GIB", 64, 1, 128) * GIB;
+const MAX_BACKUP_EXPANDED_BYTES = boundedNumberEnv("MAX_BACKUP_EXPANDED_GIB", 64, 1, 128) * GIB;
+const MAX_BACKUP_FILES = 50000;
 
 const {
   DATA_DIR,
@@ -65,6 +71,8 @@ const {
   COLLECTIONS_PATH,
   SOURCES_PATH,
   FAVORITES_PATH,
+  PROFILES_PATH,
+  SAVES_DIR,
   GAME_ASSETS_DIR,
   COVERS_DIR,
   COLLECTION_COVERS_DIR,
@@ -76,6 +84,7 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 let cachedCatalog = null;
 let catalogSignature = "";
+let backupRestoreInProgress = false;
 
 // On a fresh install there's no admin account yet (no data/admin.json).
 // Force every request straight to the setup wizard until one is created,
@@ -236,7 +245,44 @@ function publicGame(g) {
     coverSource: g.coverSource || null,
     coverVersion: g.coverVersion || 0,
     tags: g.tags || [],
+    source: g.source || null,
   };
+}
+
+async function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+async function findDuplicateSwf(catalog, buffer) {
+  const digest = swfAnalysis.sha256(buffer);
+  let catalogUpdated = false;
+  for (const game of catalog) {
+    if (game.sha256 && game.sha256 === digest) {
+      if (catalogUpdated) saveCatalog(catalog);
+      return { game, digest, catalogUpdated: false };
+    }
+    if (game.sha256 || !game.file || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(game.file)) continue;
+    const existingPath = path.join(GAMES_DIR, game.file);
+    try {
+      const existingDigest = await sha256File(existingPath);
+      game.sha256 = existingDigest;
+      catalogUpdated = true;
+      if (existingDigest === digest) {
+        if (catalogUpdated) saveCatalog(catalog);
+        return { game, digest, catalogUpdated: false };
+      }
+    } catch (error) {
+      // A missing legacy file does not prevent new uploads from being added.
+    }
+  }
+  if (catalogUpdated) saveCatalog(catalog);
+  return { game: null, digest, catalogUpdated };
 }
 
 function requireSameOrigin(req, res, next) {
@@ -274,9 +320,168 @@ function uploadErrorStatus(error) {
   return error && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
 }
 
+function collectBackupTree(root, archivePrefix, entries) {
+  if (!fs.existsSync(root)) return;
+  for (const item of fs.readdirSync(root, { withFileTypes: true })) {
+    const sourcePath = path.join(root, item.name);
+    const archivePath = `${archivePrefix}/${item.name}`;
+    if (item.isSymbolicLink()) continue;
+    if (item.isDirectory()) collectBackupTree(sourcePath, archivePath, entries);
+    else if (item.isFile() && isAllowedBackupPath(archivePath)) entries.push({ sourcePath, archivePath });
+  }
+}
+
+function makeBackupEntries() {
+  const entries = [];
+  const stateFiles = [
+    [CATALOG_PATH, "data/catalog.json", loadCatalog],
+    [COLLECTIONS_PATH, "data/collections.json", loadCollections],
+    [SOURCES_PATH, "data/sources.json", loadSources],
+    [FAVORITES_PATH, "data/favorites.json", favorites.listFavorites],
+    [PROFILES_PATH, "data/profiles.json", profiles.loadProfiles],
+  ];
+  for (const [filePath, archivePath, load] of stateFiles) {
+    if (fs.existsSync(filePath)) entries.push({ sourcePath: filePath, archivePath });
+    else entries.push({ buffer: Buffer.from(`${JSON.stringify(load(), null, 2)}\n`), archivePath });
+  }
+  collectBackupTree(GAMES_DIR, "games", entries);
+  collectBackupTree(COVERS_DIR, "data/covers", entries);
+  collectBackupTree(GAME_ASSETS_DIR, "data/game-assets", entries);
+  collectBackupTree(SAVES_DIR, "data/saves", entries);
+  return entries;
+}
+
+function isAllowedBackupPath(name) {
+  if ([
+    "manifest.json",
+    "data/catalog.json",
+    "data/collections.json",
+    "data/sources.json",
+    "data/favorites.json",
+    "data/profiles.json",
+  ].includes(name)) return true;
+  if (/^games\/[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(name)) return true;
+  if (/^data\/covers\/(?:collections\/)?[a-z0-9]+(?:-[a-z0-9]+)*\.(?:jpg|png|webp)$/i.test(name)) return true;
+  if (/^data\/game-assets\/[a-z0-9]+(?:-[a-z0-9]+)*\/[\w.-]{1,120}$/i.test(name)) return true;
+  if (/^data\/saves\/[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*\.json$/i.test(name)) return true;
+  return false;
+}
+
+function validateBackupJson(stageDir, relativePath, validator) {
+  const filePath = path.join(stageDir, ...relativePath.split("/"));
+  if (fs.statSync(filePath).size > 256 * MIB) throw new Error(`Backup ${relativePath} exceeds the JSON size limit`);
+  const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  if (!validator(value)) throw new Error(`Backup contains invalid ${relativePath}`);
+  return value;
+}
+
+function commitBackupTargets(stageDir) {
+  const id = crypto.randomUUID();
+  const directoryTargets = [
+    [path.join(stageDir, "games"), GAMES_DIR],
+    [path.join(stageDir, "data", "covers"), COVERS_DIR],
+    [path.join(stageDir, "data", "game-assets"), GAME_ASSETS_DIR],
+    [path.join(stageDir, "data", "saves"), SAVES_DIR],
+  ];
+  const fileTargets = [
+    [path.join(stageDir, "data", "catalog.json"), CATALOG_PATH],
+    [path.join(stageDir, "data", "collections.json"), COLLECTIONS_PATH],
+    [path.join(stageDir, "data", "sources.json"), SOURCES_PATH],
+    [path.join(stageDir, "data", "favorites.json"), FAVORITES_PATH],
+    [path.join(stageDir, "data", "profiles.json"), PROFILES_PATH],
+  ];
+  const targets = [
+    ...directoryTargets.map(([staged, target]) => ({ staged, target, directory: true })),
+    ...fileTargets.map(([staged, target]) => ({ staged, target, directory: false })),
+  ];
+  const normalizedTargets = targets.map(({ target }) => path.resolve(target));
+  for (const target of normalizedTargets) {
+    const relativeData = path.relative(target, DATA_DIR);
+    if (relativeData === "" || (!relativeData.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeData))) {
+      throw new Error("Configured storage paths overlap the account data folder; restore was stopped");
+    }
+  }
+  for (let i = 0; i < normalizedTargets.length; i++) {
+    for (let j = i + 1; j < normalizedTargets.length; j++) {
+      const a = normalizedTargets[i];
+      const b = normalizedTargets[j];
+      const aContainsB = path.relative(a, b);
+      const bContainsA = path.relative(b, a);
+      if (
+        aContainsB === "" || bContainsA === "" ||
+        (!aContainsB.startsWith(`..${path.sep}`) && !path.isAbsolute(aContainsB)) ||
+        (!bContainsA.startsWith(`..${path.sep}`) && !path.isAbsolute(bContainsA))
+      ) throw new Error("Configured storage paths overlap each other; restore was stopped");
+    }
+  }
+
+  const swaps = [];
+  try {
+    for (const item of targets) {
+      const { staged, target, directory } = item;
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      if (directory) fs.mkdirSync(staged, { recursive: true });
+      else if (!fs.existsSync(staged)) throw new Error(`Backup is missing ${path.basename(target)}`);
+      const prepared = `${target}.restore-stage-${id}`;
+      const previous = `${target}.restore-old-${id}`;
+      fs.rmSync(prepared, { recursive: true, force: true });
+      if (directory) fs.cpSync(staged, prepared, { recursive: true, dereference: false });
+      else fs.copyFileSync(staged, prepared);
+      const hadPrevious = fs.existsSync(target);
+      if (hadPrevious) fs.renameSync(target, previous);
+      try {
+        fs.renameSync(prepared, target);
+      } catch (error) {
+        if (hadPrevious) fs.renameSync(previous, target);
+        throw error;
+      }
+      swaps.push({ target, previous, hadPrevious });
+    }
+  } catch (error) {
+    for (const swap of swaps.reverse()) {
+      try {
+        fs.rmSync(swap.target, { recursive: true, force: true });
+        if (swap.hadPrevious && fs.existsSync(swap.previous)) fs.renameSync(swap.previous, swap.target);
+      } catch (rollbackError) {
+        console.error(`Backup restore rollback failed for ${swap.target}: ${rollbackError.message}`);
+      }
+    }
+    throw error;
+  }
+
+  for (const swap of swaps) {
+    if (swap.hadPrevious) {
+      try { fs.rmSync(swap.previous, { recursive: true, force: true }); }
+      catch (error) { console.warn(`Could not remove previous restore data at ${swap.previous}: ${error.message}`); }
+    }
+  }
+  for (const filePath of [CATALOG_PATH, COLLECTIONS_PATH, SOURCES_PATH, FAVORITES_PATH, PROFILES_PATH]) {
+    try { fs.rmSync(`${filePath}.bak`, { force: true }); } catch (error) { /* stale backup cleanup is best effort */ }
+  }
+  cachedCatalog = null;
+  catalogSignature = "";
+}
+
 const gameUpload = createMultipartUpload(MAX_UPLOAD_FILE_BYTES, 2);
 const singleCoverUpload = createMultipartUpload(MAX_COVER_FILE_BYTES, 1);
 const sidecarUpload = createMultipartUpload(MAX_SIDECAR_FILE_BYTES, MAX_SIDECAR_FILES);
+const backupUploadDir = path.join(DATA_DIR, ".backup-imports");
+const backupUpload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, callback) {
+      try {
+        fs.mkdirSync(backupUploadDir, { recursive: true });
+        callback(null, backupUploadDir);
+      } catch (error) {
+        callback(error);
+      }
+    },
+    filename(req, file, callback) {
+      callback(null, `${crypto.randomUUID()}.tar.gz`);
+    },
+  }),
+  limits: { fileSize: MAX_BACKUP_UPLOAD_BYTES, files: 1, fields: 0, parts: 1 },
+});
 
 // ---- Public API ----
 
@@ -486,6 +691,171 @@ app.get("/api/admin/session", auth.requireAdminApi, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/admin/backup", auth.requireAdminApi, (req, res) => {
+  const entries = makeBackupEntries();
+  const manifest = {
+    format: "flashback-backup",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    fileCount: entries.length + 1,
+    includes: ["game files", "covers", "sidecar files", "game saves", "catalog", "collections", "sources", "favorites", "profiles"],
+    excludes: ["admin account", "login sessions", "Ruffle runtime"],
+  };
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", 'attachment; filename="flashback-backup.tar.gz"');
+  const archive = backupArchive.createTarGzipStream(entries, manifest);
+  archive.on("error", (error) => {
+    console.error(`FlashBack backup export failed: ${error.message}`);
+    if (res.headersSent) res.destroy(error);
+    else res.status(500).json({ error: "backup_export_failed" });
+  });
+  archive.pipe(res);
+});
+
+app.post(
+  "/api/admin/backup/restore",
+  requireSameOrigin,
+  auth.requireAdminApi,
+  (req, res, next) => {
+    if (backupRestoreInProgress) return res.status(409).json({ error: "backup_restore_busy" });
+    backupRestoreInProgress = true;
+    const contentLength = Number(req.headers["content-length"]);
+    if (Number.isFinite(contentLength) && contentLength > MAX_BACKUP_UPLOAD_BYTES) {
+      backupRestoreInProgress = false;
+      return res.status(413).json({ error: "backup_too_large" });
+    }
+    backupUpload.single("backup")(req, res, (error) => {
+      if (error) {
+        backupRestoreInProgress = false;
+        return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: error.code === "LIMIT_FILE_SIZE" ? "backup_too_large" : "backup_invalid" });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    if (!req.file) {
+      backupRestoreInProgress = false;
+      return res.status(400).json({ error: "backup_file_required" });
+    }
+    let stageDir = null;
+    try {
+      stageDir = fs.mkdtempSync(path.join(DATA_DIR, ".restore-"));
+      const extraction = await backupArchive.extractTarGzipFile(req.file.path, stageDir, {
+        allowPath: isAllowedBackupPath,
+        maxFiles: MAX_BACKUP_FILES,
+        maxBytes: MAX_BACKUP_EXPANDED_BYTES,
+      });
+      const requiredFiles = [
+        "manifest.json",
+        "data/catalog.json",
+        "data/collections.json",
+        "data/sources.json",
+        "data/favorites.json",
+        "data/profiles.json",
+      ];
+      if (requiredFiles.some((name) => !extraction.files.has(name))) {
+        throw new Error("Backup is missing required catalog data");
+      }
+      const manifestPath = path.join(stageDir, "manifest.json");
+      if (fs.statSync(manifestPath).size > MIB) throw new Error("Backup manifest is too large");
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      if (manifest.format !== "flashback-backup" || manifest.version !== 1) {
+        throw new Error("Backup format is not supported");
+      }
+      if (manifest.fileCount !== extraction.fileCount) throw new Error("Backup file count does not match its manifest");
+      const catalog = validateBackupJson(stageDir, "data/catalog.json", Array.isArray);
+      const savedCollections = validateBackupJson(stageDir, "data/collections.json", (value) =>
+        Array.isArray(value) && value.every((collection) =>
+          collection && /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(collection.slug || "") &&
+          typeof collection.name === "string" && Array.isArray(collection.games) &&
+          collection.games.every((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(slug))
+        )
+      );
+      const sources = validateBackupJson(stageDir, "data/sources.json", Array.isArray);
+      const favoritesList = validateBackupJson(stageDir, "data/favorites.json", (value) =>
+        Array.isArray(value) && value.every((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))
+      );
+      const savedProfiles = validateBackupJson(stageDir, "data/profiles.json", Array.isArray);
+      if (!Array.isArray(favoritesList) || !Array.isArray(savedProfiles)) throw new Error("Backup catalog data is invalid");
+      for (const profile of savedProfiles) {
+        if (!profile || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(profile.id || "") || typeof profile.name !== "string") {
+          throw new Error("Backup contains invalid profile data");
+        }
+      }
+      for (const collection of savedCollections) {
+        if (!collection.games.every((slug) => catalog.some((game) => game.slug === slug))) {
+          throw new Error("Backup collection refers to a missing game");
+        }
+      }
+      for (const source of sources) {
+        if (!source || typeof source.id !== "string" || parseSourceInput(source).error) {
+          throw new Error("Backup contains invalid saved source data");
+        }
+      }
+      for (const game of catalog) {
+        if (
+          !game || typeof game.title !== "string" || !game.title.trim() ||
+          !/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(game.slug || "") ||
+          !/^[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(game.file || "") ||
+          !extraction.files.has(`games/${game.file}`)
+        ) throw new Error("Backup contains invalid or missing game files");
+        const gamePath = path.join(stageDir, "games", game.file);
+        const gameStat = fs.statSync(gamePath);
+        if (gameStat.size > MAX_UPLOAD_FILE_BYTES) throw new Error(`Backup game exceeds the file limit: ${game.file}`);
+        const header = Buffer.alloc(8);
+        const descriptor = fs.openSync(gamePath, "r");
+        try { fs.readSync(descriptor, header, 0, header.length, 0); } finally { fs.closeSync(descriptor); }
+        if (!isValidSwf(header)) throw new Error(`Backup contains an invalid SWF: ${game.file}`);
+        if (typeof game.sha256 === "string" && game.sha256 !== await sha256File(gamePath)) {
+          throw new Error(`Backup game checksum does not match: ${game.file}`);
+        }
+      }
+      for (const archivePath of extraction.files) {
+        if (archivePath.startsWith("data/covers/")) {
+          const filePath = path.join(stageDir, ...archivePath.split("/"));
+          const stat = fs.statSync(filePath);
+          if (stat.size > MAX_COVER_FILE_BYTES) throw new Error("Backup cover exceeds the image size limit");
+          const ext = path.extname(filePath).slice(1).toLowerCase();
+          if (detectImageExt(fs.readFileSync(filePath)) !== ext) throw new Error("Backup contains an invalid cover image");
+        } else if (archivePath.startsWith("data/game-assets/")) {
+          if (fs.statSync(path.join(stageDir, ...archivePath.split("/"))).size > MAX_SIDECAR_FILE_BYTES) {
+            throw new Error("Backup sidecar exceeds the file size limit");
+          }
+        } else if (archivePath.startsWith("data/saves/")) {
+          const savePath = path.join(stageDir, ...archivePath.split("/"));
+          if (fs.statSync(savePath).size > 5 * MIB) throw new Error("Backup save file exceeds the size limit");
+          const saveData = JSON.parse(fs.readFileSync(savePath, "utf8"));
+          if (!saveData || typeof saveData !== "object" || Array.isArray(saveData)) throw new Error("Backup contains an invalid game save");
+        } else if (archivePath.startsWith("data/") && archivePath.endsWith(".json")) {
+          if (fs.statSync(path.join(stageDir, ...archivePath.split("/"))).size > 256 * MIB) {
+            throw new Error("Backup JSON file exceeds the size limit");
+          }
+        }
+      }
+      commitBackupTargets(stageDir);
+      res.json({
+        ok: true,
+        games: catalog.length,
+        files: extraction.fileCount,
+        bytes: extraction.totalBytes,
+        keepsAdminAccount: true,
+      });
+    } catch (error) {
+      const message = error.message || "";
+      console.warn(`FlashBack backup restore rejected: ${message}`);
+      const conflict = message.includes("Configured storage paths overlap");
+      res.status(conflict ? 409 : 400).json({ error: conflict ? "backup_storage_paths_overlap" : "backup_invalid" });
+    } finally {
+      if (stageDir) {
+        try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (error) { /* cleanup is best effort */ }
+      }
+      try { fs.rmSync(req.file.path, { force: true }); } catch (error) { /* cleanup is best effort */ }
+      try { fs.rmdirSync(backupUploadDir); } catch (error) { /* leave directory while another restore is running */ }
+      backupRestoreInProgress = false;
+    }
+  }
+);
+
 app.get("/api/admin/sources", auth.requireAdminApi, (req, res) => {
   const sources = loadSources().sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
@@ -505,7 +875,15 @@ app.post("/api/admin/sources", requireSameOrigin, auth.requireAdminApi, (req, re
   }
 
   const now = new Date().toISOString();
-  const source = { id: crypto.randomUUID(), ...parsed.value, createdAt: now, updatedAt: now };
+  const source = {
+    id: crypto.randomUUID(),
+    ...parsed.value,
+    healthStatus: "unchecked",
+    healthCheckedAt: null,
+    healthHttpStatus: null,
+    createdAt: now,
+    updatedAt: now,
+  };
   sources.push(source);
   saveSources(sources);
   res.status(201).json(source);
@@ -523,9 +901,11 @@ app.put("/api/admin/sources/:id", requireSameOrigin, auth.requireAdminApi, (req,
     return res.status(409).json({ error: "source_url_duplicate" });
   }
 
+  const urlChanged = sourceUrlKey(sources[index].url) !== urlKey;
   sources[index] = {
     ...sources[index],
     ...parsed.value,
+    ...(urlChanged ? { healthStatus: "unchecked", healthCheckedAt: null, healthHttpStatus: null } : {}),
     updatedAt: new Date().toISOString(),
   };
   saveSources(sources);
@@ -541,8 +921,49 @@ app.delete("/api/admin/sources/:id", requireSameOrigin, auth.requireAdminApi, (r
   res.json({ ok: true });
 });
 
+app.post("/api/admin/sources/:id/check", requireSameOrigin, auth.requireAdminApi, async (req, res) => {
+  const sources = loadSources();
+  const source = sources.find((item) => item.id === req.params.id);
+  if (!source) return res.status(404).json({ error: "source_not_found" });
+
+  const result = await flashpoint.checkPublicUrl(source.url);
+  source.healthStatus = result.healthStatus;
+  source.healthCheckedAt = new Date().toISOString();
+  source.healthHttpStatus = result.httpStatus;
+  source.updatedAt = source.healthCheckedAt;
+  saveSources(sources);
+  res.json(source);
+});
+
 app.get("/api/admin/games", auth.requireAdminApi, (req, res) => {
   res.json(loadCatalog());
+});
+
+app.get("/api/admin/games/:slug/diagnostics", auth.requireAdminApi, (req, res) => {
+  const game = loadCatalog().find((entry) => entry.slug === req.params.slug);
+  if (!game || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(game.file || "")) {
+    return res.status(404).json({ error: "game_not_found" });
+  }
+  const filePath = path.join(GAMES_DIR, game.file);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: "game_file_not_found" });
+  const buffer = fs.readFileSync(filePath);
+  const assetsDir = gameAssetsDir(game.slug);
+  const installedSidecars = fs.existsSync(assetsDir)
+    ? fs.readdirSync(assetsDir).filter((name) => isSafeAssetFilename(name)).sort()
+    : [];
+  const ruffleReady = fs.existsSync(path.join(RUFFLE_DIR, "ruffle.js"));
+  let ruffleVersion = "";
+  try {
+    ruffleVersion = fs.readFileSync(path.join(RUFFLE_DIR, "VERSION"), "utf8").trim();
+  } catch (error) {
+    // A missing version file is reported as unavailable version metadata.
+  }
+  res.json({
+    analysis: swfAnalysis.inspectSwf(buffer, { sha: game.sha256, installedSidecars }),
+    ruffle: { ready: ruffleReady, version: ruffleVersion || null },
+    renderer: game.renderer || "auto",
+    source: game.source || null,
+  });
 });
 
 app.post(
@@ -555,7 +976,7 @@ app.post(
       next();
     });
   },
-  (req, res) => {
+  async (req, res) => {
     const file = req.files?.swf?.[0];
     const coverFile = req.files?.cover?.[0];
     const title = (req.body.title || "").trim();
@@ -587,6 +1008,27 @@ app.post(
     }
 
     const catalog = loadCatalog();
+    let source = null;
+    const sourceId = typeof req.body.sourceId === "string" ? req.body.sourceId.trim() : "";
+    if (sourceId) {
+      const registeredSource = loadSources().find((item) => item.id === sourceId);
+      if (!registeredSource) return res.status(400).json({ error: "source_not_found" });
+      source = {
+        id: registeredSource.id,
+        name: registeredSource.name,
+        url: registeredSource.url,
+        importedAt: new Date().toISOString(),
+        method: "manual-upload",
+      };
+    }
+    const { game: duplicate, digest } = await findDuplicateSwf(catalog, file.buffer);
+    if (duplicate) {
+      return res.status(409).json({
+        error: "duplicate_swf",
+        existingGame: { slug: duplicate.slug, title: duplicate.title },
+        sha256: digest,
+      });
+    }
     const slug = uniqueSlug(catalog.map((g) => g.slug), slugify(title));
     const filename = `${slug}.swf`;
 
@@ -604,6 +1046,9 @@ app.post(
       cover: coverExt,
       coverVersion: coverExt ? Date.now() : 0,
       tags,
+      sha256: digest,
+      sidecarHints: swfAnalysis.sidecarHints(file.buffer),
+      ...(source ? { source } : {}),
     };
 
     catalog.push(entry);
@@ -656,6 +1101,15 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
     return res.status(400).json({ error: "not_a_flash_game" });
   }
 
+  const catalog = loadCatalog();
+  const alreadyImported = catalog.find((game) => game.flashpointId === id);
+  if (alreadyImported) {
+    return res.status(409).json({
+      error: "duplicate_flashpoint_entry",
+      existingGame: { slug: alreadyImported.slug, title: alreadyImported.title },
+    });
+  }
+
   let found = await flashpoint.fetchFirstValidSwf(entry.launchCommands);
   if (!found && entry.archiveAvailable !== false) {
     try {
@@ -678,7 +1132,14 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
   }
 
   const title = entry.title || "Untitled";
-  const catalog = loadCatalog();
+  const { game: duplicate, digest } = await findDuplicateSwf(catalog, found.buffer);
+  if (duplicate) {
+    return res.status(409).json({
+      error: "duplicate_swf",
+      existingGame: { slug: duplicate.slug, title: duplicate.title },
+      sha256: digest,
+    });
+  }
   const slug = uniqueSlug(catalog.map((g) => g.slug), slugify(title));
   const filename = `${slug}.swf`;
 
@@ -723,6 +1184,16 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
     coverSource,
     coverVersion: coverExt ? Date.now() : 0,
     flashpointId: id,
+    sha256: digest,
+    sidecarHints: swfAnalysis.sidecarHints(found.buffer),
+    source: {
+      id: `flashpoint:${id}`,
+      name: "Flashpoint Archive",
+      url: "https://flashpointarchive.org/",
+      importedAt: new Date().toISOString(),
+      method: found.fromGameZip ? "flashpoint-gamezip" : "original-link",
+      referenceId: id,
+    },
     tags: [],
   };
 

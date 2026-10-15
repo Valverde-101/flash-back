@@ -37,6 +37,10 @@ The library starts out empty. Add games yourself, either by uploading your own `
 - **Swappable themes** via plain CSS files (see [THEMES.md](THEMES.md)), ships with Dark Neon, Light Neon, Geo (Y2K) and NES (8-bit)
 - **Multi-language UI** (English default, with Portuguese and Spanish) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
 - **Admin panel** to upload your own `.swf` games and cover art, protected by a real login (not the browser's native Basic Auth popup)
+- **Saved SWF sources**: keep a personal list of websites, check a link on demand, and carry the selected source into a manual upload so its player page keeps the attribution
+- **Duplicate protection**: uploaded and Flashpoint-imported games are fingerprinted with SHA-256; identical SWFs link back to the existing game instead of creating another library entry
+- **SWF diagnostics**: inspect the file signature/version, declared size, Ruffle installation, checksum and possible missing sidecar filenames from the admin panel. These are clues, not a guarantee of Ruffle compatibility.
+- **Portable backup and restore** from the admin panel: one `.tar.gz` includes game files, covers, sidecars, household saves, sources, favorites, collections and profiles
 - **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources. Sidecar files are not bundled, so some games may need their extra files copied separately.
 - **Import from Flashpoint Archive**: search by name, try the original game link, and use Flashpoint's archived GameZIP as a fallback when that link is offline (see [Importing from Flashpoint Archive](#importing-from-flashpoint-archive) below)
 - Uploads are validated by **file content**, not extension: a renamed `.txt` won't pass as a `.swf`
@@ -129,7 +133,7 @@ The admin panel doesn't ship with a default password. On a fresh install, before
 3. You're logged in immediately and land on the admin panel
 4. From this point on, `/setup` stops being reachable and the site behaves normally for everyone
 
-From then on, `/admin` requires logging in at **`/login`**. Sessions are stored as an HttpOnly cookie and last 30 days, but they live in server memory, so restarting the server/container logs everyone out (you'll just need to log in again, the account itself isn't affected).
+From then on, `/admin` requires logging in at **`/login`**. The browser keeps an HttpOnly session cookie for 30 days. The server persists only a SHA-256 digest of the token, so the login survives server restarts without writing a reusable cookie token to disk.
 
 ### Forgot your password?
 
@@ -164,7 +168,7 @@ There's no database and no third-party auth library. The whole account system is
 - **Password is never stored.** At signup, a random 16-byte `salt` is generated and the password is run through `crypto.scryptSync(password, salt, 64)`. Only the resulting hash is kept; the plaintext password never touches disk.
 - **scrypt**, not MD5/SHA/bcrypt, because it's deliberately memory-hard: expensive to run at scale, which makes brute-forcing a stolen `admin.json` far more costly than a fast hash would. It's also built into Node's `crypto` module, so it adds zero dependencies.
 - **Login** recomputes the hash from the submitted password using the stored `salt`, then compares it with `crypto.timingSafeEqual` instead of `===`, so a network attacker can't infer the correct hash byte-by-byte from response-time differences. Usernames are compared the same way.
-- **Sessions** aren't JWTs or anything self-contained. Logging in generates a random 32-byte token, stored in an in-memory `Map` (`token → createdAt`) on the server process, and sent to the browser as an `HttpOnly; SameSite=Lax` cookie valid for 30 days. Keeping sessions in memory (not a file or database) means a server/container restart logs everyone out, but the account itself is untouched: a deliberate trade-off for a single-admin self-hosted tool, where "everyone re-logs in after a restart" is a minor inconvenience and "one less place secrets can leak from" is worth it.
+- **Sessions** use random 32-byte browser tokens with 30-day `HttpOnly; SameSite=Lax` cookies. The server stores only each token's SHA-256 digest and creation time in `data/sessions.json`, so a restart keeps the admin signed in without storing reusable cookie values. Logging out removes the digest. The session file is local and gitignored.
 
 `data/admin.json` is gitignored and lives on a mounted volume in Docker, so it never ends up in the repository or in the published image.
 
@@ -203,6 +207,10 @@ The easiest way is the admin panel (`/admin`):
    - Toggle **Needs WebGL** if the game shows a blank screen (see below)
    - Remove the game entirely (deletes the file + its cover from disk too)
 
+The upload form can optionally record one of the saved SWF sources. Opening **Import SWF** from a source card preselects it; the player's game page then links back to that source. Flashpoint imports keep their archive entry ID. New imports are fingerprinted with SHA-256: identical SWF bytes stop with a link to the existing game. Legacy game files are hashed the first time a duplicate check compares them.
+
+**Analyze SWF** reports its signature, version, declared and actual size, checksum, installed Ruffle version and possible sidecar filenames. It is a quick diagnostic, not an emulator compatibility certification. Possible sidecar names are string-scan hints; upload a file under **Extra files** only when the game needs it.
+
 ### Games that need WebGL
 
 The player defaults to Ruffle's automatic renderer selection for compatibility. The admin panel can force the 2D canvas renderer for a game when cover capture matters more than GPU-only features. WebGL's drawing buffer isn't guaranteed to persist between frames, so a cover capture from a WebGL-rendered game can come out solid black.
@@ -236,6 +244,12 @@ A few things worth knowing:
 - The GameZIP fallback comes from the public API configured by Flashpoint's own [database site](https://github.com/FlashpointProject/flashpoint-database). This is still a remote service and imports depend on it being available; FlashBack does not bulk-download the archive.
 - Requests use a real, identifying User-Agent and short server-side cooldowns. Imports are manual and one game at a time, not a bulk scraper.
 - If you have games to contribute back, or just want to support the people doing this preservation work, see Flashpoint's [downloads page](https://flashpointarchive.org/downloads/) and [contributing guide](https://flashpointarchive.org/datahub/Extended_FAQ).
+
+### Saved SWF sources
+
+The **SWF Sources** page is a personal list of websites you want to keep handy. **Check link** sends a bounded request only after you click it. A `404` or `410` is marked broken; access denials, timeouts and other responses remain inconclusive. FlashBack does not crawl these sites automatically.
+
+Choose **Import SWF** on a source card to open the admin upload form with that source selected. The game page retains a link to the source after upload. Flashpoint imports also record the archive entry ID.
 
 You can also do it by hand: drop a `.swf` file into `games/`, then add an entry to `data/catalog.json`:
 
@@ -299,12 +313,20 @@ Defaults (D-pad → arrow keys, the two main face buttons → Z/X, Start → Ent
 
 Mappings are saved per game in the browser's `localStorage` (`flashback:gamepad:<slug>`), not synced across devices, since a controller's physical layout is a property of that device, not of a profile.
 
+## Backups and restore
+
+Use **Backup and restore** at the bottom of `/admin` to download a streaming `.tar.gz` archive or restore one made by FlashBack. The archive contains game files, covers, sidecar files, household saves, catalog, collections, saved sources, favorites and profiles. It excludes the admin account, login sessions and Ruffle runtime.
+
+Restore accepts only known archive paths, checks the JSON catalog and SWF signatures, stages files before replacing the current library and rolls back completed folder swaps if a later step fails. It keeps the current admin account and session. Restore replaces the listed library data; keep an independent copy of important backups.
+
 ## Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `4000` | Port the server listens on |
 | `MAX_UPLOAD_MB` | `200` | Max size (MB) for `.swf`/cover uploads in the admin panel |
+| `MAX_BACKUP_UPLOAD_GIB` | `64` | Compressed restore upload limit in GiB (hard cap: 128) |
+| `MAX_BACKUP_EXPANDED_GIB` | `64` | Expanded restore size limit in GiB (hard cap: 128) |
 | `RESET_ADMIN` | unset | Set to `true` to wipe the admin account on next startup and re-trigger the setup wizard |
 
 ## Project structure
@@ -318,12 +340,17 @@ server/
     auth.js               Account setup, scrypt password hashing, cookie
                            sessions, and the RESET_ADMIN escape hatch
     flashpoint.js         Search + import from Flashpoint Archive
+    swfAnalysis.js        SHA-256, SWF header and sidecar filename diagnostics
+    backupArchive.js     Streaming gzip/TAR backup creation and safe extraction
     profiles.js            Household profiles + cross-device save storage
     slugify.js
   scripts/
     fetch-ruffle.js       Downloads the self-hosted Ruffle build
 data/
   catalog.json           Game metadata (starts empty, gitignored)
+  sources.json           Saved source websites (gitignored)
+  favorites.json         Shared favorite list (gitignored)
+  sessions.json          Hashed admin sessions (gitignored)
   collections.json       Curated collections (starts empty, gitignored)
   admin.json             Admin username + salted password hash (gitignored)
   profiles.json           Household profile list (gitignored)

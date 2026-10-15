@@ -84,6 +84,19 @@ function buildSourceCard(source) {
     inactive.textContent = t("sources_inactive");
     titleRow.appendChild(inactive);
   }
+  const health = document.createElement("span");
+  health.className = `source-health-pill source-health-${source.healthStatus || "unchecked"}`;
+  health.textContent = t(`sources_health_${source.healthStatus || "unchecked"}`);
+  if (source.healthCheckedAt) {
+    const checkedAt = new Date(source.healthCheckedAt);
+    const detail = [
+      Number.isNaN(checkedAt.getTime()) ? "" : checkedAt.toLocaleString(),
+      source.healthHttpStatus ? `HTTP ${source.healthHttpStatus}` : "",
+    ].filter(Boolean).join(" · ");
+    health.title = detail;
+    health.setAttribute("aria-label", `${health.textContent}${detail ? ` · ${detail}` : ""}`);
+  }
+  titleRow.appendChild(health);
   content.appendChild(titleRow);
 
   const link = document.createElement("a");
@@ -130,9 +143,32 @@ function buildSourceCard(source) {
 
   const importButton = document.createElement("a");
   importButton.className = "source-action-btn";
-  importButton.href = "admin#upload-form";
+  importButton.href = `admin?source=${encodeURIComponent(source.id)}#upload-form`;
   importButton.textContent = t("sources_import_swf");
   actions.appendChild(importButton);
+
+  const checkButton = document.createElement("button");
+  checkButton.type = "button";
+  checkButton.className = "source-action-btn";
+  checkButton.textContent = t("sources_check_link");
+  checkButton.addEventListener("click", async () => {
+    checkButton.disabled = true;
+    checkButton.textContent = t("sources_checking_link");
+    try {
+      const updated = await sourceRequest(`/api/admin/sources/${encodeURIComponent(source.id)}/check`, {
+        method: "POST",
+      });
+      sources = sources.map((item) => item.id === updated.id ? updated : item);
+      renderSources();
+    } catch (error) {
+      if (error.message !== "unauthenticated") {
+        window.alert(error.message === "network_error" ? t("source_error_network") : sourceApiError(error.message));
+      }
+      checkButton.disabled = false;
+      checkButton.textContent = t("sources_check_link");
+    }
+  });
+  actions.appendChild(checkButton);
 
   const editButton = document.createElement("button");
   editButton.type = "button";

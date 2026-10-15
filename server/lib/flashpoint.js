@@ -248,12 +248,16 @@ function createSafeFetcher({ lookup = dns.promises.lookup, httpClient = http, ht
             }
             if (status !== 200) {
               response.destroy();
-              return finish(reject, new Error(`GET ${url.href} -> ${status}`));
+              const error = networkError("ERR_HTTP_STATUS", `Remote server returned HTTP ${status}.`);
+              error.httpStatus = status;
+              return finish(reject, error);
             }
 
             const contentLength = Number(response.headers["content-length"]);
             if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-              return abort(networkError("ERR_RESPONSE_TOO_LARGE", `Response exceeds the ${maxBytes}-byte limit.`));
+              const error = networkError("ERR_RESPONSE_TOO_LARGE", `Response exceeds the ${maxBytes}-byte limit.`);
+              error.httpStatus = status;
+              return abort(error);
             }
 
             const chunks = [];
@@ -261,7 +265,9 @@ function createSafeFetcher({ lookup = dns.promises.lookup, httpClient = http, ht
             response.on("data", (chunk) => {
               received += chunk.length;
               if (received > maxBytes) {
-                return abort(networkError("ERR_RESPONSE_TOO_LARGE", `Response exceeds the ${maxBytes}-byte limit.`));
+                const error = networkError("ERR_RESPONSE_TOO_LARGE", `Response exceeds the ${maxBytes}-byte limit.`);
+                error.httpStatus = status;
+                return abort(error);
               }
               chunks.push(chunk);
             });
@@ -291,6 +297,23 @@ function fetchText(url) {
 
 function fetchBuffer(url, maxBytes = MAX_RESPONSE_BYTES.swf) {
   return safeFetch(url, maxBytes);
+}
+
+async function checkPublicUrl(url) {
+  try {
+    await safeFetch(url, 64 * 1024);
+    return { healthStatus: "online", httpStatus: 200 };
+  } catch (error) {
+    if (error.httpStatus === 404 || error.httpStatus === 410) {
+      return { healthStatus: "broken", httpStatus: error.httpStatus };
+    }
+    if (error.httpStatus === 200) {
+      // A normal page larger than the small probe limit still proves that the
+      // host answered; the remainder is intentionally not downloaded.
+      return { healthStatus: "online", httpStatus: 200 };
+    }
+    return { healthStatus: "inconclusive", httpStatus: error.httpStatus || null };
+  }
 }
 
 function isFlashpointId(id) {
@@ -789,6 +812,7 @@ module.exports = {
   fetchScreenshot,
   fetchLogo,
   fetchSidecarAssets,
+  checkPublicUrl,
   trySearchSlot,
   tryImportSlot,
   // Exported for focused network-policy tests; application callers should use

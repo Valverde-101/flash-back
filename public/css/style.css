@@ -837,6 +837,26 @@ main {
 .game-row-meta {
   color: var(--text-dim);
   font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.game-diagnostics-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.game-diagnostics {
+  max-width: 100%;
+  padding: 10px 12px;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: 0.76rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .game-row-delete {
@@ -1076,6 +1096,57 @@ main {
   margin-top: 16px;
   line-height: 1.5;
 }
+
+.game-source {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.game-source a { color: var(--accent2); }
+
+.backup-panel > p {
+  max-width: 80ch;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.backup-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  margin: 4px 0 14px;
+  padding: 8px 14px;
+  color: var(--button-text, var(--text));
+  background: var(--accent);
+  border-radius: var(--radius);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.backup-download-btn:hover { filter: brightness(1.08); }
+
+.backup-restore-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.backup-restore-form label {
+  display: flex;
+  flex: 1 1 280px;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.backup-restore-form input[type="file"] { max-width: 100%; }
+.backup-restore-form #backup-restore-status { flex-basis: 100%; margin: 0; }
 
 .footer {
   max-width: 1400px;
@@ -1687,6 +1758,20 @@ main {
 
 .source-type-pill { color: var(--text); border-color: rgba(var(--accent-rgb), 0.45); }
 .source-status-pill { color: var(--danger); }
+.source-health-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.source-health-online { color: var(--success); border-color: var(--success); }
+.source-health-broken { color: var(--danger); border-color: var(--danger); }
+.source-health-inconclusive { color: var(--warning, var(--text-dim)); }
 .source-notes {
   margin: 12px 0 0;
   color: var(--text-dim);

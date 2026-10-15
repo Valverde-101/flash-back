@@ -3,11 +3,15 @@ const statusEl = document.getElementById("upload-status");
 const submitBtn = document.getElementById("submit-btn");
 const gamesListEl = document.getElementById("games-list");
 const gamesEmptyEl = document.getElementById("games-empty");
+const sourceSelectEl = document.getElementById("source-select");
 
 const collectionForm = document.getElementById("collection-form");
 const collectionStatusEl = document.getElementById("collection-status");
 const collectionSubmitBtn = document.getElementById("collection-submit-btn");
 const collectionsListEl = document.getElementById("collections-list");
+const backupRestoreForm = document.getElementById("backup-restore-form");
+const backupRestoreStatus = document.getElementById("backup-restore-status");
+const backupRestoreButton = document.getElementById("backup-restore-btn");
 
 let allCollections = [];
 let allGames = [];
@@ -21,6 +25,24 @@ async function af(url, opts) {
     throw new Error("unauthenticated");
   }
   return res;
+}
+
+async function loadSourceOptions() {
+  const response = await af("/api/admin/sources");
+  if (!response.ok) return;
+  const sources = await response.json();
+  const requestedId = new URLSearchParams(window.location.search).get("source") || "";
+  const emptyOption = sourceSelectEl.options[0];
+  sourceSelectEl.replaceChildren(emptyOption);
+  for (const source of sources) {
+    const option = document.createElement("option");
+    option.value = source.id;
+    option.textContent = `${source.name}${source.active ? "" : ` · ${t("sources_inactive")}`}`;
+    sourceSelectEl.appendChild(option);
+  }
+  if (requestedId && sources.some((source) => source.id === requestedId)) {
+    sourceSelectEl.value = requestedId;
+  }
 }
 
 document.getElementById("logout-btn").addEventListener("click", async () => {
@@ -58,12 +80,15 @@ function renderGames() {
 
     const meta = document.createElement("div");
     meta.className = "game-row-meta";
-    meta.textContent = `${game.file} · ${formatSize(game.sizeBytes || 0)}`;
+    const hashShort = game.sha256 ? ` · SHA-256 ${game.sha256.slice(0, 12)}` : "";
+    const sourceLabel = game.source ? ` · ${t("game_source_label")}: ${game.source.name}` : "";
+    meta.textContent = `${game.file} · ${formatSize(game.sizeBytes || 0)}${hashShort}${sourceLabel}`;
     main.appendChild(meta);
 
     main.appendChild(buildTagsEditor(game));
     main.appendChild(buildCollectionChips(game));
     main.appendChild(buildAssetsEditor(game));
+    main.appendChild(buildDiagnosticsControl(game));
     card.appendChild(main);
 
     const deleteBtn = document.createElement("button");
@@ -523,8 +548,12 @@ form.addEventListener("submit", async (e) => {
     if (!res.ok) {
       statusEl.textContent = data.error ? tError(data.error) : t("error_submitting_game");
       statusEl.classList.add("error");
+      addExistingGameLink(statusEl, data.existingGame);
     } else {
       statusEl.textContent = t("game_added_success", { title: data.title });
+      if (data.sidecarHints && data.sidecarHints.length) {
+        statusEl.append(` ${t("sidecar_hints_notice", { files: data.sidecarHints.join(", ") })}`);
+      }
       statusEl.classList.add("success");
       form.reset();
       loadGames();
@@ -688,6 +717,7 @@ function updateStaticText() {
   submitBtn.innerHTML = iconSvg("save") + " " + t("submit_game");
   collectionSubmitBtn.innerHTML = iconSvg("plus") + " " + t("submit_collection");
   flashpointSearchBtn.innerHTML = iconSvg("search") + " " + t("flashpoint_search_btn");
+  backupRestoreButton.textContent = t("backup_restore");
 }
 
 // ---- Import from Flashpoint Archive ----
@@ -787,11 +817,18 @@ async function importFromFlashpoint(id, button) {
           ? t("flashpoint_imported_with_assets", { count: data.sidecarAssets.length })
           : t("flashpoint_imported"));
       button.dataset.imported = "true";
+      const installedSidecars = new Set((data.sidecarAssets || []).map((name) => name.toLowerCase()));
+      const missingHints = (data.sidecarHints || []).filter((name) => !installedSidecars.has(name.toLowerCase()));
+      if (missingHints.length) {
+        flashpointStatusEl.textContent = t("sidecar_hints_notice", { files: missingHints.join(", ") });
+        flashpointStatusEl.className = "upload-status";
+      }
       loadGames();
     } else {
       button.innerHTML = iconSvg("plus") + " " + t("flashpoint_import_btn");
       flashpointStatusEl.textContent = data.error ? tError(data.error) : t("error_importing_flashpoint");
       flashpointStatusEl.classList.add("error");
+      addExistingGameLink(flashpointStatusEl, data.existingGame);
     }
   } catch (err) {
     button.innerHTML = iconSvg("plus") + " " + t("flashpoint_import_btn");
@@ -806,6 +843,108 @@ async function importFromFlashpoint(id, button) {
   }
 }
 
+backupRestoreForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!backupRestoreForm.elements.backup.files[0]) return;
+  if (!window.confirm(t("backup_restore_confirm"))) return;
+  backupRestoreStatus.textContent = "";
+  backupRestoreStatus.className = "upload-status";
+  backupRestoreButton.disabled = true;
+  backupRestoreButton.textContent = t("backup_restoring");
+  try {
+    const response = await af("/api/admin/backup/restore", {
+      method: "POST",
+      body: new FormData(backupRestoreForm),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      backupRestoreStatus.textContent = data.error ? tError(data.error) : t("backup_restore_failed");
+      backupRestoreStatus.classList.add("error");
+      return;
+    }
+    backupRestoreStatus.textContent = t("backup_restore_success", { games: data.games, files: data.files });
+    backupRestoreStatus.classList.add("success");
+    backupRestoreForm.reset();
+    await loadSourceOptions();
+    await loadCollections();
+    await loadGames();
+  } catch (error) {
+    if (error.message === "unauthenticated") return;
+    backupRestoreStatus.textContent = t("network_error_restoring_backup");
+    backupRestoreStatus.classList.add("error");
+  } finally {
+    backupRestoreButton.disabled = false;
+    backupRestoreButton.textContent = t("backup_restore");
+  }
+});
+
+function buildDiagnosticsControl(game) {
+  const section = document.createElement("section");
+  section.className = "game-diagnostics-control";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "game-cover-action";
+  button.textContent = t("analyze_game");
+  const output = document.createElement("div");
+  output.className = "game-diagnostics hidden";
+  output.setAttribute("role", "status");
+  output.setAttribute("aria-live", "polite");
+  button.addEventListener("click", async () => {
+    if (!output.classList.contains("hidden")) {
+      output.classList.add("hidden");
+      button.textContent = t("analyze_game");
+      return;
+    }
+    button.disabled = true;
+    button.textContent = t("analyzing_game");
+    output.textContent = "";
+    try {
+      const response = await af(`/api/admin/games/${encodeURIComponent(game.slug)}/diagnostics`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "game_diagnostics_unavailable");
+      const analysis = data.analysis;
+      const missing = analysis.missingSidecarHints.length
+        ? analysis.missingSidecarHints.join(", ")
+        : t("diagnostic_no_missing_sidecars");
+      const sizeNote = analysis.declaredSizeMatches === false
+        ? ` · ${t("diagnostic_declared_size_mismatch")}`
+        : analysis.declaredSizeMatches === null
+          ? ` · ${t("diagnostic_size_unverified")}`
+          : "";
+      output.textContent = [
+        `${t("diagnostic_swf")}: ${analysis.valid ? t("diagnostic_valid") : t("diagnostic_invalid")}`,
+        `${t("diagnostic_format")}: ${analysis.format} · v${analysis.version ?? "?"} · ${analysis.compression}`,
+        `${t("diagnostic_size")}: ${formatSize(analysis.actualBytes)} · ${t("diagnostic_header_size")}: ${formatSize(analysis.declaredBytes || 0)}${sizeNote}`,
+        `SHA-256: ${analysis.sha256}`,
+        `${t("diagnostic_ruffle")}: ${data.ruffle.ready ? (data.ruffle.version || t("diagnostic_available")) : t("diagnostic_missing")}`,
+        `${t("diagnostic_sidecars")}: ${missing}`,
+        analysis.compression === "lzma"
+          ? `${t("diagnostic_limits_note")} ${t("diagnostic_lzma_note")}`
+          : t("diagnostic_limits_note"),
+      ].join("\n");
+      output.classList.remove("hidden");
+      button.textContent = t("hide_diagnostics");
+    } catch (error) {
+      if (error.message === "unauthenticated") return;
+      output.textContent = tError(error.message);
+      output.classList.remove("hidden");
+    } finally {
+      button.disabled = false;
+      if (button.textContent === t("analyzing_game")) button.textContent = t("analyze_game");
+    }
+  });
+  section.append(button, output);
+  return section;
+}
+
+function addExistingGameLink(target, game) {
+  if (!game || !game.slug) return;
+  const link = document.createElement("a");
+  link.href = `play?slug=${encodeURIComponent(game.slug)}`;
+  link.textContent = t("open_existing_game");
+  target.append(" ", link);
+}
+
 initThemeToggle(document.getElementById("theme-select"));
 initLangToggle(document.getElementById("lang-select"));
 updateStaticText();
@@ -817,6 +956,7 @@ function onLanguageChange() {
 }
 
 async function init() {
+  await loadSourceOptions();
   await loadCollections();
   loadGames();
 }

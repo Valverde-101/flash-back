@@ -13,6 +13,10 @@ data/saves/
 data/game-assets/
 data/favorites.json
 data/*.json.bak
+data/.backup-imports/
+data/.restore-*/
+*.restore-stage-*
+*.restore-old-*
 *.log
 .env
 volumes/

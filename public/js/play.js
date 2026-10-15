@@ -3,12 +3,35 @@ const slug = params.get("slug");
 
 const titleEl = document.getElementById("game-title");
 const descEl = document.getElementById("game-description");
+const sourceEl = document.getElementById("game-source");
 const container = document.getElementById("player-container");
 const playerStatusEl = document.getElementById("player-status");
 const downloadGameBtn = document.getElementById("download-game-btn");
 const favoriteGameBtn = document.getElementById("favorite-game-btn");
 
 let player = null;
+let currentGameSource = null;
+
+function renderGameSource(source) {
+  currentGameSource = source || null;
+  sourceEl.replaceChildren();
+  sourceEl.classList.add("hidden");
+  if (!source || typeof source.url !== "string") return;
+  try {
+    const sourceUrl = new URL(source.url);
+    if (sourceUrl.protocol !== "https:" && sourceUrl.protocol !== "http:") return;
+    sourceEl.append(document.createTextNode(`${t("game_source_label")}: `));
+    const sourceLink = document.createElement("a");
+    sourceLink.href = sourceUrl.href;
+    sourceLink.target = "_blank";
+    sourceLink.rel = "noopener noreferrer";
+    sourceLink.textContent = source.name || sourceUrl.hostname;
+    sourceEl.appendChild(sourceLink);
+    sourceEl.classList.remove("hidden");
+  } catch (error) {
+    // Ignore malformed provenance on legacy or manually edited catalog data.
+  }
+}
 
 // ---- Cross-device saves (profile-based) ----
 // Ruffle writes Flash's SharedObject ("save") data straight into this
@@ -115,6 +138,7 @@ async function main() {
   titleEl.textContent = game.title;
   document.title = `${game.title} — FlashBack`;
   descEl.textContent = game.description || "";
+  renderGameSource(game.source);
 
   currentGameFile = game.file;
   downloadGameBtn.href = `/api/games/${encodeURIComponent(game.slug)}/download`;
@@ -516,6 +540,7 @@ updateGamepadConfigBtn();
 
 function onLanguageChange() {
   updateBackLink();
+  renderGameSource(currentGameSource);
   updateFullscreenBtn();
   updateCaptureCoverBtn();
   crtBtn.innerHTML = iconSvg("monitor") + " " + t("crt_button");
