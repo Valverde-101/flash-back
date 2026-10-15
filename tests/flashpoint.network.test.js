@@ -127,13 +127,18 @@ test("enforces the byte cap while streaming even without Content-Length", async 
   await assert.rejects(fetch("https://assets.example.net/game.swf", 5), { code: "ERR_RESPONSE_TOO_LARGE" });
 });
 
-test("uses separate bounded budgets for HTML, SWFs, sidecars, and logos", () => {
+test("uses separate bounded budgets for HTML, API data, GameZIPs, SWFs, sidecars, and logos", () => {
   assert.deepEqual(_networkLimits, {
     html: 2 * 1024 * 1024,
+    api: 5 * 1024 * 1024,
     swf: 200 * 1024 * 1024,
+    gameZip: 256 * 1024 * 1024,
     sidecar: 8 * 1024 * 1024,
     sidecarTotal: 24 * 1024 * 1024,
     logo: 4 * 1024 * 1024,
   });
-  assert.equal(new Set([_networkLimits.html, _networkLimits.swf, _networkLimits.sidecar, _networkLimits.logo]).size, 4);
+  assert.equal(
+    new Set([_networkLimits.html, _networkLimits.api, _networkLimits.swf, _networkLimits.gameZip, _networkLimits.sidecar, _networkLimits.logo]).size,
+    6
+  );
 });

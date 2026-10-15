@@ -38,7 +38,7 @@ The library starts out empty. Add games yourself, either by uploading your own `
 - **Multi-language UI** (English default, Portuguese included) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
 - **Admin panel** to upload your own `.swf` games and cover art, protected by a real login (not the browser's native Basic Auth popup)
 - **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources. Sidecar files are not bundled, so some games may need their extra files copied separately.
-- **Import from Flashpoint Archive**: search [flashpointarchive.org](https://flashpointarchive.org) by name and import a Flash game straight from one of its original hosting links, if one is still alive (see [Managing games](#managing-games-admin) below)
+- **Import from Flashpoint Archive**: search by name, try the original game link, and use Flashpoint's archived GameZIP as a fallback when that link is offline (see [Importing from Flashpoint Archive](#importing-from-flashpoint-archive) below)
 - Uploads are validated by **file content**, not extension: a renamed `.txt` won't pass as a `.swf`
 - **Simple JSON storage**: no database, easy to inspect/edit/back up by hand
 - Icons via inlined [Lucide](https://lucide.dev) SVGs (self-hosted, ISC license)
@@ -217,7 +217,7 @@ Not everything is fixable. Some old ad-supported games (confirmed on *Don't Look
 
 Some Flash games fetch a sidecar file at runtime — an XML config, a level list — from the same directory as their `.swf`, rather than embedding everything in the movie itself.
 
-Importing from Flashpoint Archive tries to handle this automatically: it decompresses the downloaded `.swf`, scans it for filename-shaped strings ending in `.xml`/`.json`/`.csv`/`.txt`/`.dat`, and tries fetching each one from the same directory the `.swf` itself came from. Anything that comes back as real data (not a 404, not a soft-404 HTML error page) is saved alongside the game automatically — confirmed working end-to-end on *Zuma's Revenge!*, which needs `data.xml` and `levels.xml` this way. It's a best-effort heuristic, not a guarantee: some movies are LZMA-compressed (skipped, not worth a dependency), the filename might not appear as a plain string, or the file might already be gone from the original host.
+When a game comes from a live original host, FlashBack decompresses the `.swf`, scans it for filename-shaped strings ending in `.xml`/`.json`/`.csv`/`.txt`/`.dat`, and tries fetching those files from the same directory. When the game comes from a GameZIP, FlashBack also saves supported data files next to the selected SWF from that archive. These are best-effort: some movies are LZMA-compressed, filenames may not appear as plain strings, and nested game data may need to be added by hand.
 
 If a game still fails with a missing-file error after import (or wasn't imported through Flashpoint at all), the same fix is available by hand: the filename is usually still visible inside the `.swf` itself (`strings` a decompressed copy of it and grep for the extension), and if the original host is still up, the file is often still there too. Upload it under **Extra files** for that game in the admin panel — filename has to match exactly what the movie asks for. It gets served at `/game-assets/<slug>/<filename>`, and Ruffle's `base` load option is set per-game to that folder, so relative loads inside the movie resolve there instead of a shared `/games/` directory (where two different games' same-named `data.xml` would otherwise collide).
 
@@ -225,16 +225,16 @@ If a game still fails with a missing-file error after import (or wasn't imported
 
 <p>
   <img src="public/images/flashpoint-logo.png" alt="Flashpoint Archive logo" width="28" align="left" style="margin-right: 8px;" />
-  <a href="https://flashpointarchive.org"><b>Flashpoint Archive</b></a> is one of the largest web-game preservation efforts that exists: a free, non-profit, community-run project keeping well over 100,000 Flash, Shockwave, HTML5 and other legacy web games and animations playable long after the platforms they depended on disappeared. Without work like theirs, most of this era of web games would already be unrecoverable. FlashBack's admin panel can search their archive directly and, with real respect for the scale of what they've built, borrow only what it needs: a working link back to a game's original home.
+  <a href="https://flashpointarchive.org"><b>Flashpoint Archive</b></a> is a community preservation project for Flash and other legacy web games and animations. FlashBack's admin panel searches its public database and can import an individual Flash game into the local library.
 </p>
 
-The **Import from Flashpoint Archive** search box in `/admin` lets you type a game name; it searches [flashpointarchive.org](https://flashpointarchive.org/search) for matches. For each result, it reads the entry's original "Launch Command" links (the URLs the game used to be hosted at, e.g. `miniclip.com`, `addictinggames.com`) straight off Flashpoint's own [game pages](https://flashpointarchive.org/view?id=bda1e0d7-145f-4c64-b354-bafbc68ccb75), and imports the game only if one of them still serves a real `.swf` file, validated with the same content check used for manual uploads.
+The **Import from Flashpoint Archive** search box in `/admin` searches the [public Flashpoint database](https://github.com/FlashpointProject/flashpoint-database), the same database client used by Flashpoint's public site. On import, FlashBack first tries the game's original hosting links. If those links are offline, it downloads the entry's GameZIP through the database API, identifies the launch SWF using the entry's `Launch Command`, validates the SWF signature, and saves the SWF plus supported same-folder data files in the local library.
 
 A few things worth knowing:
 
-- Only entries tagged `Platform: Flash` on Flashpoint are importable; other platforms they preserve (HTML5, Shockwave, Unity, etc.) are outside this project's scope and are rejected.
-- It deliberately does **not** use Flashpoint's own GameZIP mirrors ([datahub docs](https://flashpointarchive.org/datahub/QEMU_GameZIP_Server)), which would mean depending on an unofficial third-party site to resolve a working download URL. If none of a game's original links are still online, the import is skipped rather than falling back to that, out of respect for infrastructure that isn't ours and wasn't built for this kind of external, automated use.
-- Requests are always sequential (never parallel), sent with a real, identifying User-Agent, and throttled by a short server-side cooldown between searches/imports, so this can't be used to hammer flashpointarchive.org or the original third-party hosts it links to. It's a manual, one-game-at-a-time tool, not a bulk scraper.
+- Only entries tagged `Platform: Flash` are importable; other platforms (HTML5, Shockwave, Unity, etc.) are outside this project's scope.
+- The GameZIP fallback comes from the public API configured by Flashpoint's own [database site](https://github.com/FlashpointProject/flashpoint-database). This is still a remote service and imports depend on it being available; FlashBack does not bulk-download the archive.
+- Requests use a real, identifying User-Agent and short server-side cooldowns. Imports are manual and one game at a time, not a bulk scraper.
 - If you have games to contribute back, or just want to support the people doing this preservation work, see Flashpoint's [downloads page](https://flashpointarchive.org/downloads/) and [contributing guide](https://flashpointarchive.org/datahub/Extended_FAQ).
 
 You can also do it by hand: drop a `.swf` file into `games/`, then add an entry to `data/catalog.json`:
@@ -353,7 +353,7 @@ public/
 
 ## Legal note
 
-This project does not ship or redistribute any Flash game files itself, and the library starts empty. Any games in your instance were either uploaded by you directly or imported from [Flashpoint Archive](https://flashpointarchive.org) via its own original hosting links. All game rights remain with their original creators. If you are a rights holder and have a concern about a game imported through this tool, please open an issue.
+This project does not ship any Flash game files itself, and the library starts empty. Files in an instance are added by its administrator, either by upload or by an individual import from [Flashpoint Archive](https://flashpointarchive.org). All game rights remain with their original creators. If you are a rights holder and have a concern about a game imported through this tool, please open an issue.
 
 ## License
 

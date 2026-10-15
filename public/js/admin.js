@@ -573,6 +573,7 @@ const flashpointQueryInput = document.getElementById("flashpoint-query");
 const flashpointSearchBtn = document.getElementById("flashpoint-search-btn");
 const flashpointStatusEl = document.getElementById("flashpoint-status");
 const flashpointResultsEl = document.getElementById("flashpoint-results");
+let flashpointImportInFlight = false;
 
 function renderFlashpointResults(results) {
   flashpointResultsEl.innerHTML = "";
@@ -637,6 +638,12 @@ flashpointForm.addEventListener("submit", async (e) => {
 });
 
 async function importFromFlashpoint(id, button) {
+  if (flashpointImportInFlight) return;
+  flashpointImportInFlight = true;
+  flashpointStatusEl.textContent = "";
+  flashpointStatusEl.className = "upload-status";
+  flashpointResultsEl.querySelectorAll("button").forEach((item) => (item.disabled = true));
+  flashpointSearchBtn.disabled = true;
   button.disabled = true;
   button.innerHTML = iconSvg("save") + " " + t("flashpoint_importing");
 
@@ -655,16 +662,23 @@ async function importFromFlashpoint(id, button) {
         (data.sidecarAssets && data.sidecarAssets.length > 0
           ? t("flashpoint_imported_with_assets", { count: data.sidecarAssets.length })
           : t("flashpoint_imported"));
+      button.dataset.imported = "true";
       loadGames();
     } else {
-      button.disabled = false;
       button.innerHTML = iconSvg("plus") + " " + t("flashpoint_import_btn");
-      alert(data.error ? tError(data.error) : t("error_importing_flashpoint"));
+      flashpointStatusEl.textContent = data.error ? tError(data.error) : t("error_importing_flashpoint");
+      flashpointStatusEl.classList.add("error");
     }
   } catch (err) {
-    button.disabled = false;
     button.innerHTML = iconSvg("plus") + " " + t("flashpoint_import_btn");
-    alert(t("network_error_importing_flashpoint"));
+    flashpointStatusEl.textContent = t("network_error_importing_flashpoint");
+    flashpointStatusEl.classList.add("error");
+  } finally {
+    flashpointImportInFlight = false;
+    flashpointSearchBtn.disabled = false;
+    flashpointResultsEl.querySelectorAll("button").forEach((item) => {
+      item.disabled = item.dataset.imported === "true";
+    });
   }
 }
 

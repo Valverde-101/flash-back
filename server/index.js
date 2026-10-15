@@ -510,6 +510,7 @@ app.get("/api/admin/flashpoint/search", auth.requireAdminApi, async (req, res) =
 app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) => {
   const id = (req.body.id || "").trim();
   if (!id) return res.status(400).json({ error: "id_required" });
+  if (!flashpoint.isFlashpointId(id)) return res.status(400).json({ error: "invalid_flashpoint_id" });
 
   const wait = flashpoint.tryImportSlot();
   if (wait > 0) return res.status(429).json({ error: "too_many_requests", retryAfterMs: wait });
@@ -525,9 +526,25 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
     return res.status(400).json({ error: "not_a_flash_game" });
   }
 
-  const found = await flashpoint.fetchFirstValidSwf(entry.launchCommands);
+  let found = await flashpoint.fetchFirstValidSwf(entry.launchCommands);
+  if (!found && entry.archiveAvailable !== false) {
+    try {
+      found = await flashpoint.fetchGameZipSwf(id, entry.archiveLaunchCommand);
+    } catch (err) {
+      const knownErrors = new Set([
+        "ERR_INVALID_GAMEZIP",
+        "ERR_GAMEZIP_SWF_NOT_FOUND",
+        "ERR_GAMEZIP_SWF_AMBIGUOUS",
+        "ERR_INVALID_GAMEZIP_SWF",
+      ]);
+      if (knownErrors.has(err.code)) {
+        return res.status(422).json({ error: err.code.toLowerCase().replace(/^err_/, "") });
+      }
+      console.error("Flashpoint GameZIP import failed:", err);
+    }
+  }
   if (!found) {
-    return res.status(404).json({ error: "no_working_swf_found" });
+    return res.status(404).json({ error: "flashpoint_backup_unavailable" });
   }
 
   const title = entry.title || "Untitled";
@@ -545,11 +562,13 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
   // fetched from the same directory as their .swf at runtime. A missing one
   // never blocks the import — it just means the admin may need to add it
   // by hand later via "Extra files" if the game turns out to need it.
-  let sidecarAssets = [];
-  try {
-    sidecarAssets = await flashpoint.fetchSidecarAssets(found.buffer, found.sourceUrl);
-  } catch (err) {
-    // Non-fatal — proceed without any sidecar assets.
+  let sidecarAssets = found.sidecarAssets || [];
+  if (!found.fromGameZip) {
+    try {
+      sidecarAssets = await flashpoint.fetchSidecarAssets(found.buffer, found.sourceUrl);
+    } catch (err) {
+      // Non-fatal — proceed without any sidecar assets.
+    }
   }
   if (sidecarAssets.length > 0) {
     const assetsDir = gameAssetsDir(slug);

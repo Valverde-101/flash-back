@@ -1,10 +1,7 @@
-// Lets the admin panel search the Flashpoint Archive (flashpointarchive.org)
-// and import a game directly from its original hosting URL, when that URL
-// is still alive. Deliberately does NOT use Flashpoint's GameZIP mirrors
-// (unstable.life) — those require depending on an unofficial third-party
-// player site to resolve a working download URL, which is more fragile and
-// more invasive than just trying the same "Launch Command" URLs Flashpoint
-// itself lists for the entry.
+// Lets the admin panel search Flashpoint's public database and import a game
+// from its original host when possible, falling back to the Flashpoint
+// database's GameZIP endpoint when the original host has disappeared. The
+// database API is also used by FlashpointProject's own public database site.
 //
 // "Respect" scenario: every request identifies itself with a real User-Agent
 // and a timeout, requests to flashpointarchive.org and to individual
@@ -19,13 +16,16 @@ const net = require("net");
 const zlib = require("zlib");
 const { isValidSwf } = require("./validateSwf");
 
-const USER_AGENT = "FlashBack/1.0 (+https://github.com/arthur-alves/flash-back) game importer";
+const USER_AGENT = "FlashBack/1.0 (+https://github.com/Valverde-101/flash-back) game importer";
+const FLASHPOINT_API_BASE = "https://db-api.unstable.life";
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_REDIRECTS = 5;
 const MAX_SIDECAR_SCAN_BYTES = 64 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = Object.freeze({
   html: 2 * 1024 * 1024,
+  api: 5 * 1024 * 1024,
   swf: 200 * 1024 * 1024,
+  gameZip: 256 * 1024 * 1024,
   sidecar: 8 * 1024 * 1024,
   sidecarTotal: 24 * 1024 * 1024,
   logo: 4 * 1024 * 1024,
@@ -293,6 +293,27 @@ function fetchBuffer(url, maxBytes = MAX_RESPONSE_BYTES.swf) {
   return safeFetch(url, maxBytes);
 }
 
+function isFlashpointId(id) {
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function flashpointApiUrl(endpoint, params) {
+  const url = new URL(endpoint, FLASHPOINT_API_BASE);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  }
+  return url.href;
+}
+
+async function fetchJson(url) {
+  const buffer = await safeFetch(url, MAX_RESPONSE_BYTES.api);
+  try {
+    return JSON.parse(buffer.toString("utf8"));
+  } catch (error) {
+    throw networkError("ERR_INVALID_JSON", "Flashpoint returned invalid JSON.");
+  }
+}
+
 function decodeEntities(str) {
   return str
     .replace(/&amp;/g, "&")
@@ -323,17 +344,33 @@ function logoUrl(id) {
   return `https://infinity.unstable.life/images/Logos/${id.slice(0, 2)}/${id.slice(2, 4)}/${id}.png?type=jpg`;
 }
 
-// The search results page already labels each entry's type ("Flash game",
-// "Flash animation", "HTML5 game", "Unity game", "Java game", ...) right in
-// the markup — filtering on that costs nothing extra (no additional
-// requests), unlike actually checking whether a working .swf download link
-// exists for each result, which would mean fetching every result's detail
-// page and trying its candidate hosts before showing anything. That's left
-// for import time (one game at a time, on click) to keep search itself
-// respectful of flashpointarchive.org and the third-party hosts it links to.
+// Search the same public database API used by FlashpointProject's own
+// flashpoint-database site. Keep the old HTML page as a graceful search
+// fallback if that API is temporarily unavailable.
 async function search(query) {
-  const url = `https://flashpointarchive.org/search?query=${encodeURIComponent(query)}`;
-  const html = await fetchText(url);
+  try {
+    const data = await fetchJson(flashpointApiUrl("/search", {
+      smartSearch: query,
+      platform: "Flash",
+      fields: "id,title,platform,launchCommand,zipped",
+      limit: 100,
+    }));
+    if (!Array.isArray(data)) throw networkError("ERR_INVALID_API_RESPONSE", "Flashpoint returned an invalid search result.");
+    return data
+      .filter((entry) => isFlashpointId(entry.id) && entry.platform === "Flash" && typeof entry.title === "string")
+      .map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        type: "Flash",
+        logo: logoUrl(entry.id),
+      }));
+  } catch (error) {
+    return searchLegacy(query);
+  }
+}
+
+async function searchLegacy(query) {
+  const html = await fetchText(`https://flashpointarchive.org/search?query=${encodeURIComponent(query)}`);
 
   const results = [];
   const blockRe = /<div class="fp-search-result">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/g;
@@ -348,6 +385,7 @@ async function search(query) {
     if (!type.startsWith("Flash")) continue;
 
     const id = titleMatch[1];
+    if (!isFlashpointId(id)) continue;
     results.push({
       id,
       title: decodeEntities(titleMatch[2]),
@@ -370,7 +408,7 @@ function extractLaunchCommands(html) {
   let match;
   while ((match = re.exec(html))) {
     const url = decodeEntities(match[1]);
-    if (url && !url.startsWith("http://localflash/") && !commands.includes(url)) {
+    if (url && !/^https?:\/\/localflash\//i.test(url) && !commands.includes(url)) {
       commands.push(url);
     }
   }
@@ -378,23 +416,45 @@ function extractLaunchCommands(html) {
 }
 
 async function getEntry(id) {
-  const html = await fetchText(`https://flashpointarchive.org/view?id=${encodeURIComponent(id)}`);
+  if (!isFlashpointId(id)) throw networkError("ERR_INVALID_FLASHPOINT_ID", "Invalid Flashpoint entry ID.");
+
+  let apiEntry = null;
+  try {
+    const data = await fetchJson(flashpointApiUrl("/search", {
+      id,
+      fields: "id,title,platform,originalDescription,launchCommand,zipped",
+      limit: 1,
+    }));
+    if (Array.isArray(data)) apiEntry = data.find((entry) => entry.id === id) || null;
+  } catch (error) {
+    // The public HTML detail page remains a usable metadata fallback.
+  }
+
+  let html = "";
+  try {
+    html = await fetchText(`https://flashpointarchive.org/view?id=${encodeURIComponent(id)}`);
+  } catch (error) {
+    if (!apiEntry) throw error;
+  }
 
   const titleMatch = html.match(/<div class="fp-content-header">([^<]*)<\/div>/);
+  const apiLaunchCommand = apiEntry && typeof apiEntry.launchCommand === "string" ? apiEntry.launchCommand : "";
   return {
     id,
-    title: titleMatch ? decodeEntities(titleMatch[1]) : "",
-    description: extractRow(html, "Original Description"),
-    platform: extractRow(html, "Platform"),
+    title: (apiEntry && apiEntry.title) || (titleMatch ? decodeEntities(titleMatch[1]) : ""),
+    description: (apiEntry && apiEntry.originalDescription) || extractRow(html, "Original Description"),
+    platform: (apiEntry && apiEntry.platform) || extractRow(html, "Platform"),
     launchCommands: extractLaunchCommands(html),
+    archiveLaunchCommand: apiLaunchCommand,
+    archiveAvailable: apiEntry ? apiEntry.zipped === true : null,
   };
 }
 
 // Tries each candidate URL in turn (sequentially, with a delay between
 // attempts out of courtesy to whatever server is still hosting each one),
 // and returns the buffer + source URL of the first one that's a genuine
-// .swf file. Returns null if none of them pan out — the caller should treat
-// that as "skip this game" rather than falling back to anything else.
+// .swf file. Returns null when every original host is down; the caller can
+// then use Flashpoint's GameZIP fallback.
 async function fetchFirstValidSwf(candidateUrls) {
   for (let i = 0; i < candidateUrls.length; i++) {
     if (i > 0) await sleep(BETWEEN_REQUESTS_DELAY_MS);
@@ -408,6 +468,203 @@ async function fetchFirstValidSwf(candidateUrls) {
     }
   }
   return null;
+}
+
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+const ZIP_LOCAL_SIGNATURE = 0x04034b50;
+const ZIP_MAX_ENTRIES = 20000;
+const ZIP_MAX_SIDECAR_FILES = 20;
+const ZIP_ALLOWED_SIDECAR_EXTENSIONS = new Set(["xml", "json", "csv", "txt", "dat", "bin", "mp3", "wav", "ogg", "png", "jpg", "jpeg", "gif", "webp"]);
+const ZIP_CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  return value >>> 0;
+});
+
+function zipError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function zipCrc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = ZIP_CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function safeZipPath(name) {
+  if (!name || name.includes("\0") || name.includes("\\") || name.startsWith("/") || /^[a-z]:/i.test(name)) return false;
+  const parts = name.split("/");
+  return parts.every((part, index) => part !== ".." && (part !== "." || index === parts.length - 1));
+}
+
+function parseGameZipEntries(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 22) {
+    throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned an invalid GameZIP archive.");
+  }
+
+  const minOffset = Math.max(0, buffer.length - 22 - 0xffff);
+  let eocdOffset = -1;
+  for (let offset = buffer.length - 22; offset >= minOffset; offset--) {
+    if (buffer.readUInt32LE(offset) !== ZIP_EOCD_SIGNATURE) continue;
+    const commentLength = buffer.readUInt16LE(offset + 20);
+    if (offset + 22 + commentLength === buffer.length) {
+      eocdOffset = offset;
+      break;
+    }
+  }
+  if (eocdOffset < 0) throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned an invalid GameZIP archive.");
+
+  const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
+  const centralDisk = buffer.readUInt16LE(eocdOffset + 6);
+  const entriesOnDisk = buffer.readUInt16LE(eocdOffset + 8);
+  const entryCount = buffer.readUInt16LE(eocdOffset + 10);
+  const centralSize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+  if (
+    diskNumber !== 0 || centralDisk !== 0 || entriesOnDisk !== entryCount ||
+    entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff ||
+    entryCount > ZIP_MAX_ENTRIES || centralOffset + centralSize > eocdOffset
+  ) {
+    throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned an unsupported GameZIP archive.");
+  }
+
+  const entries = [];
+  let offset = centralOffset;
+  const centralEnd = centralOffset + centralSize;
+  for (let index = 0; index < entryCount; index++) {
+    if (offset + 46 > centralEnd || buffer.readUInt32LE(offset) !== ZIP_CENTRAL_SIGNATURE) {
+      throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned a damaged GameZIP archive.");
+    }
+    const flags = buffer.readUInt16LE(offset + 8);
+    const method = buffer.readUInt16LE(offset + 10);
+    const crc32 = buffer.readUInt32LE(offset + 16);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const uncompressedSize = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const startDisk = buffer.readUInt16LE(offset + 34);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    if (
+      nextOffset > centralEnd || startDisk !== 0 || compressedSize === 0xffffffff ||
+      uncompressedSize === 0xffffffff || localOffset === 0xffffffff
+    ) {
+      throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned an unsupported GameZIP entry.");
+    }
+
+    const nameBytes = buffer.subarray(offset + 46, offset + 46 + nameLength);
+    const name = nameBytes.toString(flags & 0x0800 ? "utf8" : "latin1");
+    const isDirectory = name.endsWith("/");
+    if (
+      !isDirectory && safeZipPath(name) && !(flags & 0x0001) &&
+      (method === 0 || method === 8)
+    ) {
+      entries.push({ name, flags, method, crc32, compressedSize, uncompressedSize, localOffset });
+    }
+    offset = nextOffset;
+  }
+
+  if (offset !== centralEnd) throw zipError("ERR_INVALID_GAMEZIP", "Flashpoint returned a malformed GameZIP directory.");
+  return entries;
+}
+
+function extractGameZipEntry(buffer, entry, maxOutputBytes) {
+  if (entry.uncompressedSize > maxOutputBytes || entry.localOffset + 30 > buffer.length) return null;
+  const offset = entry.localOffset;
+  if (buffer.readUInt32LE(offset) !== ZIP_LOCAL_SIGNATURE) return null;
+  const flags = buffer.readUInt16LE(offset + 6);
+  const method = buffer.readUInt16LE(offset + 8);
+  const nameLength = buffer.readUInt16LE(offset + 26);
+  const extraLength = buffer.readUInt16LE(offset + 28);
+  if ((flags & 0x0001) || method !== entry.method) return null;
+  const dataStart = offset + 30 + nameLength + extraLength;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > buffer.length || dataEnd < dataStart) return null;
+
+  let data;
+  try {
+    const compressed = buffer.subarray(dataStart, dataEnd);
+    data = entry.method === 0
+      ? Buffer.from(compressed)
+      : zlib.inflateRawSync(compressed, { maxOutputLength: maxOutputBytes });
+  } catch (error) {
+    return null;
+  }
+  if (data.length !== entry.uncompressedSize || zipCrc32(data) !== entry.crc32) return null;
+  return data;
+}
+
+function launchPathFromCommand(command) {
+  if (!command) return "";
+  try {
+    return decodeURIComponent(new URL(command).pathname).replace(/^\/+/, "").toLowerCase();
+  } catch (error) {
+    return "";
+  }
+}
+
+function selectGameZipSwf(entries, launchCommand) {
+  let candidates = entries.filter((entry) => entry.name.toLowerCase().endsWith(".swf"));
+  if (!candidates.length) throw zipError("ERR_GAMEZIP_SWF_NOT_FOUND", "The Flashpoint backup contains no SWF file.");
+  const launchPath = launchPathFromCommand(launchCommand);
+  if (launchPath) {
+    const exact = candidates.filter((entry) => {
+      const relative = entry.name.replace(/^content\//i, "").toLowerCase();
+      return relative === launchPath || relative.endsWith(`/${launchPath}`);
+    });
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) throw zipError("ERR_GAMEZIP_SWF_AMBIGUOUS", "The Flashpoint backup contains multiple matching SWF files.");
+
+    const basename = launchPath.slice(launchPath.lastIndexOf("/") + 1);
+    const basenameMatches = candidates.filter((entry) => entry.name.slice(entry.name.lastIndexOf("/") + 1).toLowerCase() === basename);
+    if (basenameMatches.length === 1) return basenameMatches[0];
+    if (basenameMatches.length > 1) throw zipError("ERR_GAMEZIP_SWF_AMBIGUOUS", "The Flashpoint backup contains multiple matching SWF files.");
+  }
+  if (candidates.length === 1) return candidates[0];
+  throw zipError("ERR_GAMEZIP_SWF_AMBIGUOUS", "The Flashpoint backup contains several SWF files and its launch file could not be identified.");
+}
+
+function extractGameZipSwf(buffer, launchCommand) {
+  const entries = parseGameZipEntries(buffer);
+  const mainEntry = selectGameZipSwf(entries, launchCommand);
+  const swf = extractGameZipEntry(buffer, mainEntry, MAX_RESPONSE_BYTES.swf);
+  if (!isValidSwf(swf)) throw zipError("ERR_INVALID_GAMEZIP_SWF", "The selected Flashpoint backup file is not a valid SWF.");
+
+  const parent = mainEntry.name.slice(0, mainEntry.name.lastIndexOf("/"));
+  const sidecarAssets = [];
+  let sidecarTotal = 0;
+  for (const entry of entries) {
+    if (sidecarAssets.length >= ZIP_MAX_SIDECAR_FILES || entry.name === mainEntry.name) continue;
+    if (entry.name.slice(0, entry.name.lastIndexOf("/")) !== parent) continue;
+    const filename = entry.name.slice(entry.name.lastIndexOf("/") + 1);
+    if (!/^[A-Za-z0-9_.-]{1,120}$/.test(filename) || filename === "." || filename === "..") continue;
+    const extension = filename.includes(".") ? filename.slice(filename.lastIndexOf(".") + 1).toLowerCase() : "";
+    if (!ZIP_ALLOWED_SIDECAR_EXTENSIONS.has(extension)) continue;
+    if (entry.uncompressedSize > MAX_RESPONSE_BYTES.sidecar || sidecarTotal + entry.uncompressedSize > MAX_RESPONSE_BYTES.sidecarTotal) continue;
+    const data = extractGameZipEntry(buffer, entry, MAX_RESPONSE_BYTES.sidecar);
+    if (!data || data.length === 0) continue;
+    sidecarTotal += data.length;
+    sidecarAssets.push({ filename, buffer: data });
+    if (sidecarTotal >= MAX_RESPONSE_BYTES.sidecarTotal) break;
+  }
+
+  return { buffer: swf, sidecarAssets };
+}
+
+async function fetchGameZipSwf(id, launchCommand) {
+  if (!isFlashpointId(id)) throw networkError("ERR_INVALID_FLASHPOINT_ID", "Invalid Flashpoint entry ID.");
+  let archive;
+  try {
+    archive = await fetchBuffer(flashpointApiUrl("/get", { id }), MAX_RESPONSE_BYTES.gameZip);
+  } catch (error) {
+    return null;
+  }
+  const extracted = extractGameZipSwf(archive, launchCommand);
+  return { ...extracted, sourceUrl: "flashpoint-gamezip", fromGameZip: true };
 }
 
 // Some Flash games load a sidecar file (XML config, level list, ...) next
@@ -514,6 +771,8 @@ module.exports = {
   search,
   getEntry,
   fetchFirstValidSwf,
+  fetchGameZipSwf,
+  isFlashpointId,
   fetchLogo,
   fetchSidecarAssets,
   trySearchSlot,
@@ -522,4 +781,6 @@ module.exports = {
   // the higher-level search/import helpers above.
   _createSafeFetcher: createSafeFetcher,
   _networkLimits: MAX_RESPONSE_BYTES,
+  _extractGameZipSwf: extractGameZipSwf,
+  _parseGameZipEntries: parseGameZipEntries,
 };
