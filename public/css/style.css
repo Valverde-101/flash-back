@@ -131,6 +131,12 @@ h1, h2, .card-title, .section-title, .collection-card-name {
   box-shadow: 0 0 calc(10px * var(--glow-strength) + 2px) rgba(var(--accent-rgb), var(--glow-strength));
 }
 
+.main-nav a.nav-import-link {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
 #search {
   flex: 1;
   max-width: 320px;
