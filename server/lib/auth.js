@@ -1,20 +1,66 @@
 const crypto = require("crypto");
 const fs = require("fs");
-const { ADMIN_PATH } = require("./paths");
+const { ADMIN_PATH, SESSIONS_PATH } = require("./paths");
 const { writeJson } = require("./jsonStore");
 
 const SESSION_COOKIE = "fgs_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// In-memory session store. Sessions don't survive a server restart — that's
-// fine for a single self-hosted admin panel and keeps this dependency-free.
+// Persist only hashes of session tokens. The browser keeps the random token in
+// its HttpOnly cookie; a copy of the local data file cannot be used to sign in.
 const sessions = new Map();
+
+function tokenDigest(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function persistSessions() {
+  const records = [...sessions].map(([tokenHash, session]) => ({
+    tokenHash,
+    createdAt: session.createdAt,
+  }));
+  // Session data has no backup: restoring an older copy could revive a token
+  // that the administrator already logged out from.
+  writeJson(SESSIONS_PATH, records, { backup: false });
+}
+
+function loadPersistedSessions() {
+  if (!fs.existsSync(SESSIONS_PATH)) return;
+  try {
+    const records = JSON.parse(fs.readFileSync(SESSIONS_PATH, "utf-8"));
+    if (!Array.isArray(records)) throw new Error("Session store must be an array");
+    const now = Date.now();
+    for (const record of records) {
+      if (
+        typeof record?.tokenHash === "string" &&
+        /^[a-f0-9]{64}$/.test(record.tokenHash) &&
+        Number.isFinite(record.createdAt) &&
+        record.createdAt <= now &&
+        now - record.createdAt <= SESSION_TTL_MS
+      ) {
+        sessions.set(record.tokenHash, { createdAt: record.createdAt });
+      }
+    }
+    if (sessions.size !== records.length) persistSessions();
+  } catch (error) {
+    // A damaged session file should sign users out, not prevent FlashBack
+    // from starting. The next successful login creates a clean store.
+    sessions.clear();
+    console.error(`Could not load persisted sessions: ${error.message}`);
+  }
+}
+
+loadPersistedSessions();
 
 // RESET_ADMIN=true wipes the stored account on startup and forces the setup
 // wizard again. Meant to be toggled from Portainer's env var editor (no
 // terminal/SSH needed) when the admin forgets their password.
 if (process.env.RESET_ADMIN === "true" && fs.existsSync(ADMIN_PATH)) {
   fs.unlinkSync(ADMIN_PATH);
+  sessions.clear();
+  for (const sessionFile of [SESSIONS_PATH, `${SESSIONS_PATH}.bak`]) {
+    if (fs.existsSync(sessionFile)) fs.unlinkSync(sessionFile);
+  }
   console.log("");
   console.log("========================================");
   console.log(" RESET_ADMIN=true — admin account cleared.");
@@ -64,19 +110,30 @@ function verifyLogin(username, password) {
 
 function createSession() {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { createdAt: Date.now() });
+  const tokenHash = tokenDigest(token);
+  sessions.set(tokenHash, { createdAt: Date.now() });
+  try {
+    persistSessions();
+  } catch (error) {
+    sessions.delete(tokenHash);
+    throw error;
+  }
   return token;
 }
 
 function destroySession(token) {
-  sessions.delete(token);
+  if (!token) return;
+  if (sessions.delete(tokenDigest(token))) persistSessions();
 }
 
 function isValidSession(token) {
-  const session = sessions.get(token);
+  if (typeof token !== "string" || !token) return false;
+  const tokenHash = tokenDigest(token);
+  const session = sessions.get(tokenHash);
   if (!session) return false;
   if (Date.now() - session.createdAt > SESSION_TTL_MS) {
-    sessions.delete(token);
+    sessions.delete(tokenHash);
+    persistSessions();
     return false;
   }
   return true;
