@@ -31,10 +31,14 @@ const TRANSLATIONS = {
     favorite_remove: "Remove from favorites",
     favorite_error: "Could not update favorites. Please try again.",
     load_more: "Load more",
+    retry: "Try again",
     library_load_error: "The library could not be loaded. Check that FlashBack is running and try again.",
     download_swf: "Download SWF",
+    download_swf_title: "Downloads only the SWF file; extra game files are separate.",
     game_loading: "Loading game…",
-    ruffle_missing: "Ruffle is not installed. Run “pnpm fetch-ruffle” and restart FlashBack.",
+    game_load_error: "This game could not be loaded. Check that FlashBack is running and try again.",
+    collection_load_error: "Collections could not be loaded.",
+    ruffle_missing: "Ruffle is not installed. Run “npm run fetch-ruffle” and restart FlashBack.",
     game_play_error: "Ruffle could not start this SWF. Check the file and its extra assets.",
 
     footer_credits_html:
@@ -228,10 +232,14 @@ const TRANSLATIONS = {
     favorite_remove: "Remover dos favoritos",
     favorite_error: "Não foi possível atualizar os favoritos. Tente novamente.",
     load_more: "Carregar mais",
+    retry: "Tentar novamente",
     library_load_error: "Não foi possível carregar a biblioteca. Verifique se o FlashBack está em execução e tente novamente.",
     download_swf: "Baixar SWF",
+    download_swf_title: "Baixa apenas o arquivo SWF; arquivos extras do jogo são separados.",
     game_loading: "Carregando jogo…",
-    ruffle_missing: "O Ruffle não está instalado. Execute “pnpm fetch-ruffle” e reinicie o FlashBack.",
+    game_load_error: "Não foi possível carregar este jogo. Verifique se o FlashBack está em execução e tente novamente.",
+    collection_load_error: "Não foi possível carregar as coleções.",
+    ruffle_missing: "O Ruffle não está instalado. Execute “npm run fetch-ruffle” e reinicie o FlashBack.",
     game_play_error: "O Ruffle não conseguiu iniciar este SWF. Verifique o arquivo e os arquivos extras.",
 
     footer_credits_html:

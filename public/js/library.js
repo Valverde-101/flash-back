@@ -15,6 +15,7 @@ let searchTimer = null;
 let requestController = null;
 let requestVersion = 0;
 let lastTags = [];
+let retryAppend = false;
 
 function renderGames(games, { append = false } = {}) {
   if (!append) grid.replaceChildren();
@@ -29,6 +30,7 @@ function setStatus(message, error = false) {
 }
 
 function renderTags() {
+  if (!tagsRow) return;
   if (favoritesOnly || lastTags.length === 0) {
     tagsRow.classList.add("hidden");
     return;
@@ -90,12 +92,20 @@ async function loadGames({ append = false } = {}) {
     if (version !== requestVersion) return;
     currentPage = page;
     hasMore = result.hasMore;
+    retryAppend = false;
+    moreButton.textContent = t("load_more");
     renderGames(result.items, { append });
     moreButton.classList.toggle("hidden", !hasMore);
     setStatus(tCount("games_count", result.total));
   } catch (error) {
     if (error.name === "AbortError") return;
-    if (!append) renderGames([]);
+    if (!append) {
+      grid.replaceChildren();
+      emptyMsg.classList.add("hidden");
+    }
+    retryAppend = append;
+    moreButton.textContent = t("retry");
+    moreButton.classList.remove("hidden");
     setStatus(t("library_load_error"), true);
   }
 }
@@ -121,7 +131,7 @@ searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => loadGames(), 180);
 });
-moreButton.addEventListener("click", () => loadGames({ append: true }));
+moreButton.addEventListener("click", () => loadGames({ append: retryAppend }));
 document.addEventListener("flashback:favorites-changed", (event) => {
   if (favoritesOnly && event.detail.favorite === false) loadGames();
 });

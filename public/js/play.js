@@ -96,13 +96,22 @@ async function main() {
     return;
   }
 
-  const res = await fetch(`/api/games/${encodeURIComponent(slug)}`);
-  if (!res.ok) {
-    titleEl.textContent = t("game_not_found");
+  let game;
+  try {
+    const res = await fetch(`/api/games/${encodeURIComponent(slug)}`);
+    if (res.status === 404) {
+      titleEl.textContent = t("game_not_found");
+      return;
+    }
+    if (!res.ok) throw new Error("game_unavailable");
+    game = await res.json();
+    if (!game || !game.file) throw new Error("invalid_game");
+  } catch (error) {
+    titleEl.textContent = t("game_load_error");
+    playerStatusEl.textContent = t("game_load_error");
+    playerStatusEl.classList.remove("hidden");
     return;
   }
-
-  const game = await res.json();
   titleEl.textContent = game.title;
   document.title = `${game.title} — FlashBack`;
   descEl.textContent = game.description || "";

@@ -1,6 +1,7 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const multer = require("multer");
 
 const { isValidSwf } = require("./lib/validateSwf");
@@ -15,13 +16,54 @@ const { readJson, writeJson } = require("./lib/jsonStore");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = process.env.PORT || 4000;
-const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 200);
+const MIB = 1024 * 1024;
+
+function boundedNumberEnv(name, fallback, minimum, maximum) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= minimum ? Math.min(value, maximum) : fallback;
+}
+
+function boundedIntegerEnv(name, fallback, minimum, maximum) {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isInteger(value) && value >= minimum ? Math.min(value, maximum) : fallback;
+}
+
+// Multer's memory storage buffers each file. Keep a hard ceiling on the
+// aggregate file buffers accepted by one multipart request, then derive
+// per-file limits so an env override cannot accidentally restore multi-GB
+// requests.
+const MAX_MULTIPART_TOTAL_BYTES = boundedNumberEnv(
+  "MAX_MULTIPART_TOTAL_MB",
+  512,
+  1,
+  512
+) * MIB;
+const MAX_MULTIPART_FIELDS = 10;
+const MAX_MULTIPART_FIELD_BYTES = 16 * 1024;
+const MAX_MULTIPART_FILE_BUDGET = Math.max(
+  1,
+  Math.floor(MAX_MULTIPART_TOTAL_BYTES - MAX_MULTIPART_FIELDS * MAX_MULTIPART_FIELD_BYTES)
+);
+const MAX_UPLOAD_FILE_BYTES = Math.min(
+  boundedNumberEnv("MAX_UPLOAD_MB", 200, 0.01, 512) * MIB,
+  Math.floor(MAX_MULTIPART_FILE_BUDGET / 2)
+);
+const MAX_COVER_FILE_BYTES = Math.min(
+  boundedNumberEnv("MAX_COVER_MB", 16, 0.01, 512) * MIB,
+  MAX_MULTIPART_FILE_BUDGET
+);
+const MAX_SIDECAR_FILES = boundedIntegerEnv("MAX_SIDECAR_FILES", 20, 1, 20);
+const MAX_SIDECAR_FILE_BYTES = Math.min(
+  boundedNumberEnv("MAX_SIDECAR_FILE_MB", 8, 0.01, 512) * MIB,
+  Math.floor(MAX_MULTIPART_FILE_BUDGET / MAX_SIDECAR_FILES)
+);
 
 const {
   DATA_DIR,
   GAMES_DIR,
   CATALOG_PATH,
   COLLECTIONS_PATH,
+  FAVORITES_PATH,
   GAME_ASSETS_DIR,
   COVERS_DIR,
   COLLECTION_COVERS_DIR,
@@ -130,6 +172,36 @@ function requireSameOrigin(req, res, next) {
   }
   next();
 }
+
+function rejectOversizedMultipart(req, res, next) {
+  const contentLength = Number(req.headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > MAX_MULTIPART_TOTAL_BYTES) {
+    return res.status(413).json({ error: "upload_too_large" });
+  }
+  next();
+}
+
+function createMultipartUpload(maxFileBytes, maxFiles) {
+  return multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: maxFileBytes,
+      files: maxFiles,
+      fields: MAX_MULTIPART_FIELDS,
+      fieldSize: MAX_MULTIPART_FIELD_BYTES,
+      parts: maxFiles + MAX_MULTIPART_FIELDS,
+      headerPairs: 100,
+    },
+  });
+}
+
+function uploadErrorStatus(error) {
+  return error && error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+}
+
+const gameUpload = createMultipartUpload(MAX_UPLOAD_FILE_BYTES, 2);
+const singleCoverUpload = createMultipartUpload(MAX_COVER_FILE_BYTES, 1);
+const sidecarUpload = createMultipartUpload(MAX_SIDECAR_FILE_BYTES, MAX_SIDECAR_FILES);
 
 // ---- Public API ----
 
@@ -251,7 +323,7 @@ app.get("/api/profiles", (req, res) => {
   res.json(profiles.loadProfiles());
 });
 
-app.post("/api/profiles", (req, res) => {
+app.post("/api/profiles", requireSameOrigin, (req, res) => {
   const name = (req.body.name || "").trim();
   if (!name) return res.status(400).json({ error: "name_required" });
   if (name.length > 40) return res.status(400).json({ error: "name_too_long" });
@@ -272,7 +344,7 @@ app.get("/api/profiles/:profileId/saves/:gameSlug", (req, res) => {
   }
 });
 
-app.post("/api/profiles/:profileId/saves/:gameSlug", (req, res) => {
+app.post("/api/profiles/:profileId/saves/:gameSlug", requireSameOrigin, (req, res) => {
   const { profileId, gameSlug } = req.params;
   if (!profiles.profileExists(profileId) || !loadCatalog().some((game) => game.slug === gameSlug)) {
     return res.status(404).json({ error: "profile_not_found" });
@@ -289,7 +361,7 @@ app.post("/api/profiles/:profileId/saves/:gameSlug", (req, res) => {
   }
 });
 
-app.delete("/api/admin/profiles/:profileId", auth.requireAdminApi, (req, res) => {
+app.delete("/api/admin/profiles/:profileId", requireSameOrigin, auth.requireAdminApi, (req, res) => {
   const removed = profiles.deleteProfile(req.params.profileId);
   if (!removed) return res.status(404).json({ error: "profile_not_found" });
   res.json({ ok: true });
@@ -332,11 +404,6 @@ app.get("/api/collections/:slug", (req, res) => {
 
 // ---- Admin API (protected) ----
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
-});
-
 // Lightweight "am I logged in as admin?" check, used by public pages (e.g.
 // play.html) to decide whether to show admin-only controls like the cover
 // capture button.
@@ -351,9 +418,10 @@ app.get("/api/admin/games", auth.requireAdminApi, (req, res) => {
 app.post(
   "/api/admin/games",
   auth.requireAdminApi,
+  rejectOversizedMultipart,
   (req, res, next) => {
-    upload.fields([{ name: "swf", maxCount: 1 }, { name: "cover", maxCount: 1 }])(req, res, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
+    gameUpload.fields([{ name: "swf", maxCount: 1 }, { name: "cover", maxCount: 1 }])(req, res, (err) => {
+      if (err) return res.status(uploadErrorStatus(err)).json({ error: err.code === "LIMIT_FILE_SIZE" ? "upload_too_large" : err.message });
       next();
     });
   },
@@ -512,9 +580,10 @@ app.post("/api/admin/flashpoint/import", auth.requireAdminApi, async (req, res) 
 app.post(
   "/api/admin/games/:slug/cover",
   auth.requireAdminApi,
+  rejectOversizedMultipart,
   (req, res, next) => {
-    upload.single("cover")(req, res, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
+    singleCoverUpload.single("cover")(req, res, (err) => {
+      if (err) return res.status(uploadErrorStatus(err)).json({ error: err.code === "LIMIT_FILE_SIZE" ? "upload_too_large" : err.message });
       next();
     });
   },
@@ -575,31 +644,111 @@ app.put("/api/admin/games/:slug", auth.requireAdminApi, (req, res) => {
 });
 
 app.delete("/api/admin/games/:slug", auth.requireAdminApi, (req, res) => {
-  const catalog = loadCatalog();
-  const index = catalog.findIndex((g) => g.slug === req.params.slug);
-  if (index === -1) return res.status(404).json({ error: "game_not_found" });
-
-  const [removed] = catalog.splice(index, 1);
-  const filePath = path.join(GAMES_DIR, removed.file);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  removeExistingCovers(COVERS_DIR, removed.slug);
-  const assetsDir = path.join(GAME_ASSETS_DIR, removed.slug);
-  if (fs.existsSync(assetsDir)) fs.rmSync(assetsDir, { recursive: true, force: true });
-  saveCatalog(catalog);
-
-  // Also drop the game from any collection it belonged to.
-  const collections = loadCollections();
-  let changed = false;
-  for (const c of collections) {
-    const idx = c.games.indexOf(removed.slug);
-    if (idx !== -1) {
-      c.games.splice(idx, 1);
-      changed = true;
-    }
+  const originalCatalog = loadCatalog().slice();
+  const removed = originalCatalog.find((game) => game.slug === req.params.slug);
+  if (!removed) return res.status(404).json({ error: "game_not_found" });
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(removed.slug || "")) {
+    return res.status(400).json({ error: "invalid_game_entry" });
   }
-  if (changed) saveCollections(collections);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(removed.file || "")) {
+    return res.status(400).json({ error: "invalid_game_entry" });
+  }
 
-  res.json({ ok: true });
+  let gamePath;
+  let assetsPath;
+  try {
+    gamePath = resolveManagedPath(GAMES_DIR, removed.file);
+    assetsPath = resolveManagedPath(GAME_ASSETS_DIR, removed.slug);
+  } catch (error) {
+    return res.status(400).json({ error: "invalid_game_entry" });
+  }
+
+  const originalFavorites = favorites.listFavorites();
+  const originalCollections = loadCollections();
+  const nextCatalog = originalCatalog.filter((game) => game.slug !== removed.slug);
+  const nextFavorites = originalFavorites.filter((slug) => slug !== removed.slug);
+  const nextCollections = originalCollections.map((collection) => ({
+    ...collection,
+    games: Array.isArray(collection.games)
+      ? collection.games.filter((slug) => slug !== removed.slug)
+      : [],
+  }));
+  const affectedCollections = originalCollections
+    .filter((collection) => Array.isArray(collection.games) && collection.games.includes(removed.slug))
+    .map((collection) => collection.slug);
+  const quarantineId = crypto.randomUUID();
+  const moves = [];
+  let catalogWriteAttempted = false;
+  let favoritesWriteAttempted = false;
+  let collectionsWriteAttempted = false;
+
+  try {
+    // Persist all references first. If moving an asset fails below, restore
+    // these snapshots and move every already-quarantined item back.
+    catalogWriteAttempted = true;
+    saveCatalog(nextCatalog);
+    favoritesWriteAttempted = true;
+    writeJson(FAVORITES_PATH, nextFavorites);
+    collectionsWriteAttempted = true;
+    saveCollections(nextCollections);
+
+    const quarantinedGame = moveToQuarantine(GAMES_DIR, gamePath, quarantineId);
+    if (quarantinedGame) moves.push(quarantinedGame);
+
+    for (const extension of ["jpg", "png", "webp"]) {
+      const coverPath = resolveManagedPath(COVERS_DIR, `${removed.slug}.${extension}`);
+      const quarantinedCover = moveToQuarantine(COVERS_DIR, coverPath, quarantineId);
+      if (quarantinedCover) moves.push(quarantinedCover);
+    }
+
+    const quarantinedAssets = moveToQuarantine(GAME_ASSETS_DIR, assetsPath, quarantineId);
+    if (quarantinedAssets) moves.push(quarantinedAssets);
+
+    const manifestPath = path.join(DATA_DIR, "quarantine", "deleted-games", `${quarantineId}.json`);
+    writeJson(manifestPath, {
+      id: quarantineId,
+      deletedAt: new Date().toISOString(),
+      game: removed,
+      wasFavorite: originalFavorites.includes(removed.slug),
+      collectionSlugs: affectedCollections,
+      files: moves,
+    });
+  } catch (error) {
+    const rollbackErrors = rollbackQuarantineMoves(moves);
+    if (catalogWriteAttempted) {
+      try {
+        saveCatalog(originalCatalog);
+      } catch (rollbackError) {
+        cachedCatalog = originalCatalog;
+        catalogSignature = "";
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (favoritesWriteAttempted) {
+      try {
+        writeJson(FAVORITES_PATH, originalFavorites);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (collectionsWriteAttempted) {
+      try {
+        saveCollections(originalCollections);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      console.error("FlashBack game deletion rollback was incomplete:", rollbackErrors);
+    }
+    console.error("FlashBack game deletion failed:", error);
+    return res.status(500).json({
+      error: "game_delete_failed",
+      rollbackComplete: rollbackErrors.length === 0,
+    });
+  }
+
+  res.json({ ok: true, quarantineId });
 });
 
 // ---- Admin: extra game assets ----
@@ -613,10 +762,98 @@ app.delete("/api/admin/games/:slug", auth.requireAdminApi, (req, res) => {
 // this folder instead of colliding with any other game's same-named file.
 
 function gameAssetsDir(slug) {
-  return path.join(GAME_ASSETS_DIR, slug);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug || "")) {
+    throw new Error("Invalid game slug");
+  }
+  return resolveManagedPath(GAME_ASSETS_DIR, slug);
 }
 
-app.get("/api/admin/games/:slug/assets", auth.requireAdminApi, (req, res) => {
+function requireGameAssetTarget(req, res, next) {
+  const { slug } = req.params;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug || "")) {
+    return res.status(400).json({ error: "invalid_game_slug" });
+  }
+  const game = loadCatalog().find((item) => item.slug === slug);
+  if (!game) return res.status(404).json({ error: "game_not_found" });
+  next();
+}
+
+function isSafeAssetFilename(filename) {
+  return typeof filename === "string" &&
+    filename !== "." &&
+    filename !== ".." &&
+    /^[A-Za-z0-9_.-]+$/.test(filename);
+}
+
+function resolveManagedPath(root, relativePath) {
+  if (typeof relativePath !== "string" || !relativePath || path.isAbsolute(relativePath)) {
+    throw new Error("Invalid managed path");
+  }
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(resolvedRoot, relativePath);
+  const insidePath = path.relative(resolvedRoot, resolvedPath);
+  if (
+    !insidePath ||
+    insidePath === ".." ||
+    insidePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(insidePath)
+  ) {
+    throw new Error("Managed path escapes its storage directory");
+  }
+  return resolvedPath;
+}
+
+function pathExists(filePath) {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function moveToQuarantine(root, sourcePath, quarantineId) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedSource = path.resolve(sourcePath);
+  const relativePath = path.relative(resolvedRoot, resolvedSource);
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error("Quarantine source escapes its storage directory");
+  }
+  if (!pathExists(resolvedSource)) return null;
+
+  const quarantinedPath = path.join(
+    resolvedRoot,
+    ".flashback-quarantine",
+    quarantineId,
+    relativePath
+  );
+  fs.mkdirSync(path.dirname(quarantinedPath), { recursive: true });
+  fs.renameSync(resolvedSource, quarantinedPath);
+  return { source: resolvedSource, quarantined: quarantinedPath };
+}
+
+function rollbackQuarantineMoves(moves) {
+  const errors = [];
+  for (const move of [...moves].reverse()) {
+    try {
+      if (!pathExists(move.quarantined)) continue;
+      if (pathExists(move.source)) throw new Error(`Rollback target already exists: ${move.source}`);
+      fs.mkdirSync(path.dirname(move.source), { recursive: true });
+      fs.renameSync(move.quarantined, move.source);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return errors;
+}
+
+app.get("/api/admin/games/:slug/assets", auth.requireAdminApi, requireGameAssetTarget, (req, res) => {
   const dir = gameAssetsDir(req.params.slug);
   if (!fs.existsSync(dir)) return res.json([]);
   res.json(fs.readdirSync(dir).sort());
@@ -625,17 +862,15 @@ app.get("/api/admin/games/:slug/assets", auth.requireAdminApi, (req, res) => {
 app.post(
   "/api/admin/games/:slug/assets",
   auth.requireAdminApi,
+  requireGameAssetTarget,
+  rejectOversizedMultipart,
   (req, res, next) => {
-    upload.array("files", 20)(req, res, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
+    sidecarUpload.array("files", MAX_SIDECAR_FILES)(req, res, (err) => {
+      if (err) return res.status(uploadErrorStatus(err)).json({ error: err.code === "LIMIT_FILE_SIZE" ? "upload_too_large" : err.message });
       next();
     });
   },
   (req, res) => {
-    const catalog = loadCatalog();
-    const game = catalog.find((g) => g.slug === req.params.slug);
-    if (!game) return res.status(404).json({ error: "game_not_found" });
-
     const files = req.files || [];
     if (files.length === 0) return res.status(400).json({ error: "no_file" });
 
@@ -653,10 +888,12 @@ app.post(
   }
 );
 
-app.delete("/api/admin/games/:slug/assets/:filename", auth.requireAdminApi, (req, res) => {
+app.delete("/api/admin/games/:slug/assets/:filename", auth.requireAdminApi, requireGameAssetTarget, (req, res) => {
+  if (!isSafeAssetFilename(req.params.filename)) {
+    return res.status(400).json({ error: "invalid_asset_filename" });
+  }
   const dir = gameAssetsDir(req.params.slug);
-  const safeName = path.basename(req.params.filename);
-  const filePath = path.join(dir, safeName);
+  const filePath = path.join(dir, req.params.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: "asset_not_found" });
   fs.unlinkSync(filePath);
   res.json({ ok: true });
@@ -716,9 +953,10 @@ app.delete("/api/admin/collections/:slug", auth.requireAdminApi, (req, res) => {
 app.post(
   "/api/admin/collections/:slug/cover",
   auth.requireAdminApi,
+  rejectOversizedMultipart,
   (req, res, next) => {
-    upload.single("cover")(req, res, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
+    singleCoverUpload.single("cover")(req, res, (err) => {
+      if (err) return res.status(uploadErrorStatus(err)).json({ error: err.code === "LIMIT_FILE_SIZE" ? "upload_too_large" : err.message });
       next();
     });
   },

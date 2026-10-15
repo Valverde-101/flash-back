@@ -1,5 +1,6 @@
 const grid = document.getElementById("grid");
 const emptyMsg = document.getElementById("empty");
+const errorMsg = document.getElementById("load-error");
 
 let lastCollections = [];
 
@@ -60,10 +61,33 @@ function render() {
   }
 }
 
+function showLoadError() {
+  errorMsg.replaceChildren(document.createTextNode(t("library_load_error")));
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "load-more-btn";
+  retry.textContent = t("retry");
+  retry.addEventListener("click", main, { once: true });
+  errorMsg.append(" ", retry);
+  errorMsg.classList.remove("hidden");
+}
+
 async function main() {
-  const res = await fetch("/api/collections");
-  lastCollections = await res.json();
-  render();
+  errorMsg.classList.add("hidden");
+  try {
+    const res = await fetch("/api/collections");
+    if (!res.ok) throw new Error("collections_unavailable");
+    const data = await res.json();
+    if (!Array.isArray(data)) throw new Error("invalid_collections");
+    lastCollections = data;
+    emptyMsg.classList.remove("error");
+    render();
+  } catch (error) {
+    grid.replaceChildren();
+    emptyMsg.classList.add("hidden");
+    errorMsg.textContent = t("library_load_error");
+    showLoadError();
+  }
 }
 
 initViewToggle(grid, document.getElementById("view-toggle"));
@@ -71,7 +95,8 @@ initThemeToggle(document.getElementById("theme-select"));
 initLangToggle(document.getElementById("lang-select"));
 
 function onLanguageChange() {
-  render();
+  if (errorMsg.classList.contains("hidden")) render();
+  else showLoadError();
 }
 
 main();

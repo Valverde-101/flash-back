@@ -37,7 +37,7 @@ The library starts out empty. Add games yourself, either by uploading your own `
 - **Swappable themes** via plain CSS files (see [THEMES.md](THEMES.md)), ships with Dark Neon, Light Neon, Geo (Y2K) and NES (8-bit)
 - **Multi-language UI** (English default, Portuguese included) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
 - **Admin panel** to upload your own `.swf` games and cover art, protected by a real login (not the browser's native Basic Auth popup)
-- **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources
+- **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources. Sidecar files are not bundled, so some games may need their extra files copied separately.
 - **Import from Flashpoint Archive**: search [flashpointarchive.org](https://flashpointarchive.org) by name and import a Flash game straight from one of its original hosting links, if one is still alive (see [Managing games](#managing-games-admin) below)
 - Uploads are validated by **file content**, not extension: a renamed `.txt` won't pass as a `.swf`
 - **Simple JSON storage**: no database, easy to inspect/edit/back up by hand
