@@ -187,13 +187,13 @@ function buildInfoEditor(game) {
 
   const rendererCheckbox = document.createElement("input");
   rendererCheckbox.type = "checkbox";
-  rendererCheckbox.checked = game.renderer === "auto";
+  rendererCheckbox.checked = game.renderer !== "canvas";
 
   rendererLabel.append(rendererCheckbox, document.createTextNode(" " + t("renderer_toggle_label")));
 
   rendererCheckbox.addEventListener("change", () => {
     const newRenderer = rendererCheckbox.checked ? "auto" : "canvas";
-    save({ renderer: newRenderer }, () => (rendererCheckbox.checked = game.renderer === "auto"));
+    save({ renderer: newRenderer }, () => (rendererCheckbox.checked = game.renderer !== "canvas"));
   });
 
   wrap.append(titleInput, descInput, rendererLabel);

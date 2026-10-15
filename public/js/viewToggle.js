@@ -4,8 +4,9 @@ const VIEW_STORAGE_KEY = "flashback:view-mode";
 function initViewToggle(gridEl, buttonEl) {
   function apply(mode) {
     gridEl.classList.toggle("list-view", mode === "list");
-    buttonEl.innerHTML =
-      mode === "list" ? iconSvg("layout-grid") + " Grade" : iconSvg("list") + " Lista";
+    buttonEl.innerHTML = mode === "list"
+      ? iconSvg("layout-grid") + " " + t("view_grid")
+      : iconSvg("list") + " " + t("view_list");
     buttonEl.dataset.mode = mode;
   }
 
@@ -17,3 +18,11 @@ function initViewToggle(gridEl, buttonEl) {
 
   apply(localStorage.getItem(VIEW_STORAGE_KEY) === "list" ? "list" : "grid");
 }
+
+window.addEventListener("flashback:language-changed", () => {
+  const button = document.querySelector(".view-toggle-btn");
+  if (!button) return;
+  button.innerHTML = button.dataset.mode === "list"
+    ? iconSvg("layout-grid") + " " + t("view_grid")
+    : iconSvg("list") + " " + t("view_list");
+});

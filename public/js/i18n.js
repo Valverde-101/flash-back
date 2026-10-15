@@ -15,6 +15,7 @@ const TRANSLATIONS = {
     tag_all: "All",
     nav_all_games: "All games",
     nav_collections: "Collections",
+    nav_favorites: "Favorites",
     search_placeholder: "Search game...",
     view_grid: "Grid",
     view_list: "List",
@@ -25,6 +26,16 @@ const TRANSLATIONS = {
     empty_games: "No games found.",
     empty_collections: "No collections created yet.",
     empty_collection_games: "No games in this collection yet.",
+    empty_favorites: "No favorites saved yet. Use the star on a game card to add one.",
+    favorite_add: "Add to favorites",
+    favorite_remove: "Remove from favorites",
+    favorite_error: "Could not update favorites. Please try again.",
+    load_more: "Load more",
+    library_load_error: "The library could not be loaded. Check that FlashBack is running and try again.",
+    download_swf: "Download SWF",
+    game_loading: "Loading game…",
+    ruffle_missing: "Ruffle is not installed. Run “pnpm fetch-ruffle” and restart FlashBack.",
+    game_play_error: "Ruffle could not start this SWF. Check the file and its extra assets.",
 
     footer_credits_html:
       'All game rights belong to their original creators. Emulated via ' +
@@ -201,6 +212,7 @@ const TRANSLATIONS = {
     tag_all: "Todos",
     nav_all_games: "Todos os jogos",
     nav_collections: "Coleções",
+    nav_favorites: "Favoritos",
     search_placeholder: "Buscar jogo...",
     view_grid: "Grade",
     view_list: "Lista",
@@ -211,6 +223,16 @@ const TRANSLATIONS = {
     empty_games: "Nenhum jogo encontrado.",
     empty_collections: "Nenhuma coleção criada ainda.",
     empty_collection_games: "Nenhum jogo nesta coleção ainda.",
+    empty_favorites: "Ainda não há favoritos. Use a estrela no cartão de um jogo para adicioná-lo.",
+    favorite_add: "Adicionar aos favoritos",
+    favorite_remove: "Remover dos favoritos",
+    favorite_error: "Não foi possível atualizar os favoritos. Tente novamente.",
+    load_more: "Carregar mais",
+    library_load_error: "Não foi possível carregar a biblioteca. Verifique se o FlashBack está em execução e tente novamente.",
+    download_swf: "Baixar SWF",
+    game_loading: "Carregando jogo…",
+    ruffle_missing: "O Ruffle não está instalado. Execute “pnpm fetch-ruffle” e reinicie o FlashBack.",
+    game_play_error: "O Ruffle não conseguiu iniciar este SWF. Verifique o arquivo e os arquivos extras.",
 
     footer_credits_html:
       'Todos os direitos dos jogos pertencem aos seus respectivos criadores. Emulado via ' +
@@ -452,6 +474,7 @@ function initLangToggle(selectEl) {
   selectEl.addEventListener("change", () => {
     localStorage.setItem(LANG_STORAGE_KEY, selectEl.value);
     applyI18n();
+    window.dispatchEvent(new Event("flashback:language-changed"));
     if (typeof onLanguageChange === "function") onLanguageChange();
   });
 

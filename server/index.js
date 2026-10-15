@@ -9,26 +9,36 @@ const { slugify } = require("./lib/slugify");
 const auth = require("./lib/auth");
 const flashpoint = require("./lib/flashpoint");
 const profiles = require("./lib/profiles");
+const favorites = require("./lib/favorites");
+const paths = require("./lib/paths");
+const { readJson, writeJson } = require("./lib/jsonStore");
 
+const HOST = process.env.HOST || "127.0.0.1";
 const PORT = process.env.PORT || 4000;
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 200);
 
-const CATALOG_PATH = path.join(__dirname, "..", "data", "catalog.json");
-const COLLECTIONS_PATH = path.join(__dirname, "..", "data", "collections.json");
-const GAMES_DIR = path.join(__dirname, "..", "games");
-const GAME_ASSETS_DIR = path.join(__dirname, "..", "data", "game-assets");
-const COVERS_DIR = path.join(__dirname, "..", "data", "covers");
-const COLLECTION_COVERS_DIR = path.join(__dirname, "..", "data", "covers", "collections");
-const PUBLIC_DIR = path.join(__dirname, "..", "public");
+const {
+  DATA_DIR,
+  GAMES_DIR,
+  CATALOG_PATH,
+  COLLECTIONS_PATH,
+  GAME_ASSETS_DIR,
+  COVERS_DIR,
+  COLLECTION_COVERS_DIR,
+  RUFFLE_DIR,
+  PUBLIC_DIR,
+} = paths;
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+let cachedCatalog = null;
+let catalogSignature = "";
 
 // On a fresh install there's no admin account yet (no data/admin.json).
 // Force every request straight to the setup wizard until one is created,
 // instead of only gating /admin — otherwise a freshly installed instance
 // looks fully usable (public library, API, etc.) with no owner set up yet.
-const SETUP_ALLOWED_PREFIXES = ["/setup", "/api/setup", "/css", "/js", "/images", "/fonts"];
+const SETUP_ALLOWED_PREFIXES = ["/setup", "/api/setup", "/api/status", "/css", "/js", "/images", "/fonts", "/ruffle"];
 app.use((req, res, next) => {
   if (auth.isConfigured()) return next();
   const allowed = SETUP_ALLOWED_PREFIXES.some(
@@ -44,28 +54,37 @@ app.use((req, res, next) => {
 // ---- Storage helpers ----
 
 function loadCatalog() {
-  if (!fs.existsSync(CATALOG_PATH)) return [];
-  const catalog = JSON.parse(fs.readFileSync(CATALOG_PATH, "utf-8"));
+  let signature = "missing";
+  try {
+    const stat = fs.statSync(CATALOG_PATH);
+    signature = `${stat.mtimeMs}:${stat.size}`;
+  } catch (err) {
+    // The catalog is optional until the first game is imported.
+  }
+  if (cachedCatalog && signature === catalogSignature) return cachedCatalog;
+  const catalog = readJson(CATALOG_PATH, [], Array.isArray);
   // Older entries may not have a tags array yet.
   for (const g of catalog) {
     if (!Array.isArray(g.tags)) g.tags = [];
   }
+  cachedCatalog = catalog;
+  catalogSignature = signature;
   return catalog;
 }
 
 function saveCatalog(catalog) {
-  fs.mkdirSync(path.dirname(CATALOG_PATH), { recursive: true });
-  fs.writeFileSync(CATALOG_PATH, JSON.stringify(catalog, null, 2) + "\n");
+  writeJson(CATALOG_PATH, catalog);
+  cachedCatalog = catalog;
+  const stat = fs.statSync(CATALOG_PATH);
+  catalogSignature = `${stat.mtimeMs}:${stat.size}`;
 }
 
 function loadCollections() {
-  if (!fs.existsSync(COLLECTIONS_PATH)) return [];
-  return JSON.parse(fs.readFileSync(COLLECTIONS_PATH, "utf-8"));
+  return readJson(COLLECTIONS_PATH, [], Array.isArray);
 }
 
 function saveCollections(collections) {
-  fs.mkdirSync(path.dirname(COLLECTIONS_PATH), { recursive: true });
-  fs.writeFileSync(COLLECTIONS_PATH, JSON.stringify(collections, null, 2) + "\n");
+  writeJson(COLLECTIONS_PATH, collections);
 }
 
 function uniqueSlug(existingSlugs, baseSlug) {
@@ -103,19 +122,78 @@ function publicGame(g) {
   };
 }
 
+function requireSameOrigin(req, res, next) {
+  const origin = req.get("origin");
+  const expectedOrigin = `${req.protocol}://${req.get("host")}`;
+  if (!origin || origin !== expectedOrigin || req.get("sec-fetch-site") === "cross-site") {
+    return res.status(403).json({ error: "same_origin_required" });
+  }
+  next();
+}
+
 // ---- Public API ----
 
 app.get("/api/games", (req, res) => {
-  const q = (req.query.q || "").toLowerCase().trim();
-  const tag = (req.query.tag || "").toLowerCase().trim();
+  const q = (typeof req.query.q === "string" ? req.query.q : "").toLocaleLowerCase().trim();
+  const tag = (typeof req.query.tag === "string" ? req.query.tag : "").toLowerCase().trim();
   let games = loadCatalog();
   if (q) {
-    games = games.filter((g) => g.title.toLowerCase().includes(q));
+    games = games.filter((g) =>
+      [g.title, g.description, ...(g.tags || [])]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase().includes(q))
+    );
   }
   if (tag) {
     games = games.filter((g) => (g.tags || []).some((t) => t.toLowerCase() === tag));
   }
+
+  if (req.query.page !== undefined || req.query.limit !== undefined) {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 60));
+    const total = games.length;
+    const items = games.slice((page - 1) * limit, page * limit).map(publicGame);
+    return res.json({ items, total, page, limit, hasMore: page * limit < total });
+  }
   res.json(games.map(publicGame));
+});
+
+app.get("/api/status", (req, res) => {
+  const ruffleReady = fs.existsSync(path.join(RUFFLE_DIR, "ruffle.js"));
+  let ruffleVersion = "";
+  try {
+    ruffleVersion = fs.readFileSync(path.join(RUFFLE_DIR, "VERSION"), "utf-8").trim();
+  } catch (err) {
+    // A missing version marker is reported as an incomplete installation.
+  }
+  res.json({
+    ok: true,
+    configured: auth.isConfigured(),
+    ruffleReady,
+    ruffleVersion,
+    storageConfigured: Boolean(process.env.FLASHBACK_DATA_DIR),
+  });
+});
+
+app.get("/api/favorites", (req, res) => {
+  const favoriteSlugs = favorites.listFavorites();
+  const gamesBySlug = new Map(loadCatalog().map((game) => [game.slug, game]));
+  res.json({
+    slugs: favoriteSlugs,
+    items: favoriteSlugs.map((slug) => gamesBySlug.get(slug)).filter(Boolean).map(publicGame),
+  });
+});
+
+app.post("/api/favorites/:slug", requireSameOrigin, (req, res) => {
+  const slug = req.params.slug;
+  if (!loadCatalog().some((game) => game.slug === slug)) {
+    return res.status(404).json({ error: "game_not_found" });
+  }
+  res.json({ ok: true, slugs: favorites.addFavorite(slug) });
+});
+
+app.delete("/api/favorites/:slug", requireSameOrigin, (req, res) => {
+  res.json({ ok: true, slugs: favorites.removeFavorite(req.params.slug) });
 });
 
 app.get("/api/games/:slug", (req, res) => {
@@ -123,6 +201,30 @@ app.get("/api/games/:slug", (req, res) => {
   const game = games.find((g) => g.slug === req.params.slug);
   if (!game) return res.status(404).json({ error: "game_not_found" });
   res.json(game);
+});
+
+app.get("/api/games/:slug/download", (req, res) => {
+  const game = loadCatalog().find((entry) => entry.slug === req.params.slug);
+  if (!game || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.swf$/i.test(game.file || "")) {
+    return res.status(404).json({ error: "game_not_found" });
+  }
+
+  const filePath = path.resolve(GAMES_DIR, game.file);
+  const gamesRoot = path.resolve(GAMES_DIR);
+  let actualPath;
+  try {
+    actualPath = fs.realpathSync(filePath);
+  } catch (err) {
+    return res.status(404).json({ error: "game_file_not_found" });
+  }
+  const relativePath = path.relative(gamesRoot, actualPath);
+  if (relativePath.startsWith(`..${path.sep}`) || relativePath === ".." || path.isAbsolute(relativePath)) {
+    return res.status(404).json({ error: "game_file_not_found" });
+  }
+
+  res.download(filePath, path.basename(game.file), (error) => {
+    if (error && !res.headersSent) res.status(404).json({ error: "game_file_not_found" });
+  });
 });
 
 app.get("/api/tags", (req, res) => {
@@ -157,24 +259,34 @@ app.post("/api/profiles", (req, res) => {
 });
 
 app.get("/api/profiles/:profileId/saves/:gameSlug", (req, res) => {
-  if (!profiles.profileExists(req.params.profileId)) {
+  const { profileId, gameSlug } = req.params;
+  if (!profiles.profileExists(profileId) || !loadCatalog().some((game) => game.slug === gameSlug)) {
     return res.status(404).json({ error: "profile_not_found" });
   }
-  const data = profiles.getSave(req.params.profileId, req.params.gameSlug);
-  if (!data) return res.status(404).json({ error: "no_save" });
-  res.json({ data });
+  try {
+    const data = profiles.getSave(profileId, gameSlug);
+    if (!data) return res.status(404).json({ error: "no_save" });
+    res.json({ data });
+  } catch (err) {
+    res.status(500).json({ error: "save_unavailable" });
+  }
 });
 
 app.post("/api/profiles/:profileId/saves/:gameSlug", (req, res) => {
-  if (!profiles.profileExists(req.params.profileId)) {
+  const { profileId, gameSlug } = req.params;
+  if (!profiles.profileExists(profileId) || !loadCatalog().some((game) => game.slug === gameSlug)) {
     return res.status(404).json({ error: "profile_not_found" });
   }
   const data = req.body.data;
   if (!data || typeof data !== "object") {
     return res.status(400).json({ error: "data_required" });
   }
-  profiles.putSave(req.params.profileId, req.params.gameSlug, data);
-  res.json({ ok: true });
+  try {
+    profiles.putSave(profileId, gameSlug, data);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: "invalid_save" });
+  }
 });
 
 app.delete("/api/admin/profiles/:profileId", auth.requireAdminApi, (req, res) => {
@@ -739,6 +851,7 @@ app.get("/admin", auth.requireAdminPage, (req, res) => {
 
 const CLEAN_PAGES = {
   "/": "index.html",
+  "/favorites": "favorites.html",
   "/collections": "collections.html",
   "/collection": "collection.html",
   "/play": "play.html",
@@ -752,8 +865,9 @@ for (const [route, file] of Object.entries(CLEAN_PAGES)) {
 app.use("/games", express.static(GAMES_DIR, { fallthrough: false }));
 app.use("/game-assets", express.static(GAME_ASSETS_DIR));
 app.use("/covers", express.static(COVERS_DIR));
+app.use("/ruffle", express.static(RUFFLE_DIR, { fallthrough: false }));
 app.use(express.static(PUBLIC_DIR, { index: false }));
 
-app.listen(PORT, () => {
-  console.log(`flashback listening on http://0.0.0.0:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`flashback listening on http://${HOST}:${PORT}`);
 });

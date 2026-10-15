@@ -251,16 +251,24 @@ main {
 }
 
 .card {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.12s ease;
-  text-decoration: none;
-  color: var(--text);
   display: flex;
   flex-direction: column;
+}
+
+.card-link {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  color: var(--text);
+  text-decoration: none;
 }
 
 .card:hover {
@@ -270,6 +278,29 @@ main {
   box-shadow: 0 0 calc(18px * var(--glow-strength) + 2px) rgba(var(--accent-rgb), var(--glow-strength)),
     0 8px 20px rgba(0, 0, 0, 0.25);
 }
+
+.favorite-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.favorite-toggle:hover { transform: scale(1.08); border-color: var(--accent); }
+.favorite-toggle .icon { width: 19px; height: 19px; }
+.favorite-toggle.is-favorite { color: #ffd166; }
+.favorite-toggle.is-favorite .icon { fill: currentColor; }
+.card .favorite-toggle { position: absolute; top: 10px; right: 10px; z-index: 2; }
+.player-favorite { flex: 0 0 auto; }
+.download-game-btn { display: inline-flex; align-items: center; text-decoration: none; }
 
 .card-cover {
   aspect-ratio: 4 / 3;
@@ -332,6 +363,8 @@ main {
   padding-right: 16px;
 }
 
+.grid.list-view .card-link { flex-direction: row; align-items: center; gap: 14px; }
+
 .grid.list-view .card:hover {
   transform: none;
 }
@@ -390,6 +423,22 @@ main {
   color: var(--text-dim);
   margin-top: 60px;
 }
+
+.library-status { max-width: 1400px; margin: 18px auto 0; color: var(--text-dim); text-align: center; font-size: 0.85rem; }
+.library-status.error { color: var(--danger); }
+.load-more-btn {
+  display: block;
+  margin: 20px auto 0;
+  padding: 10px 20px;
+  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.load-more-btn:hover { border-color: var(--accent); }
 
 .hidden { display: none; }
 

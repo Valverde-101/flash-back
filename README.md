@@ -26,7 +26,8 @@ The library starts out empty. Add games yourself, either by uploading your own `
 
 ## Features
 
-- **Browsable library** with live search, tag filters, and grid/list view toggle
+- **Browsable library** with debounced, paginated search across titles, descriptions and tags; tag filters; lazy-loaded covers; and grid/list view toggle
+- **Favorites** shared by browsers using this server, with star controls on game cards and player pages; favorite data stays in local JSON storage and is excluded from Git
 - **Collections**: curated groups of games, each with its own page; a game can belong to more than one
 - **In-browser Flash emulation** via a self-hosted Ruffle build, no CDN dependency, no plugin install
 - **Fullscreen mode** and an optional **CRT scanline overlay**, handy for the many games shipped at very low native resolutions
@@ -36,6 +37,7 @@ The library starts out empty. Add games yourself, either by uploading your own `
 - **Swappable themes** via plain CSS files (see [THEMES.md](THEMES.md)), ships with Dark Neon, Light Neon, Geo (Y2K) and NES (8-bit)
 - **Multi-language UI** (English default, Portuguese included) via a small dictionary-based i18n system (see [LANGUAGES.md](LANGUAGES.md))
 - **Admin panel** to upload your own `.swf` games and cover art, protected by a real login (not the browser's native Basic Auth popup)
+- **Local SWF copies**: download an individual `.swf` already present in your library from its player page; this does not fetch games from third-party sources
 - **Import from Flashpoint Archive**: search [flashpointarchive.org](https://flashpointarchive.org) by name and import a Flash game straight from one of its original hosting links, if one is still alive (see [Managing games](#managing-games-admin) below)
 - Uploads are validated by **file content**, not extension: a renamed `.txt` won't pass as a `.swf`
 - **Simple JSON storage**: no database, easy to inspect/edit/back up by hand
@@ -56,7 +58,7 @@ A step-by-step tour of the main things you can do, annotated screenshot by scree
 ## Requirements
 
 - Node.js 18+
-- `unzip` available on `PATH` (used by the Ruffle fetch script)
+- `tar` available on `PATH` (Windows 10+ includes `tar.exe`; used by the Ruffle fetch script)
 - Docker + Docker Compose (only if you want to run it containerized)
 
 ## Quick start (Node, no Docker)
@@ -71,6 +73,10 @@ npm start
 ```
 
 Open **http://localhost:4000**. The library starts empty; see [First-time setup](#first-time-setup) to create your admin account, then [Managing games](#managing-games-admin) to add your first titles.
+
+By default, FlashBack listens only on `127.0.0.1` and keeps editable data under the repository's `data/` directory and SWFs under `games/`. To keep data outside a checkout, set `FLASHBACK_DATA_DIR` before starting the server. When that is set, games default to a `games/` folder inside the data directory; set `FLASHBACK_GAMES_DIR` separately if the existing game files should stay elsewhere. `FLASHBACK_RUFFLE_DIR` can point to a shared local Ruffle installation. JSON writes preserve a `.bak` copy of the previous version.
+
+To make the server reachable from other devices on a trusted LAN, set `HOST=0.0.0.0`; the default stays loopback-only. Do not expose it directly to the public internet.
 
 ## Quick start (Docker)
 
@@ -172,8 +178,10 @@ If you plan to expose FlashBack beyond your local network (a public URL, port-fo
 
 ## Using the library
 
-- **Search**: the box in the top bar filters by title as you type
+- **Search**: the box in the top bar searches titles, descriptions and tags. Results load 60 at a time; choose **Load more** for the next page.
 - **Tags**: click a tag chip to filter the library down to that tag; click "All" to clear it
+- **Favorites**: click the star on a card or player page. The **Favorites** tab shows the saved games. This list is shared by all browser profiles on this FlashBack server and stored in `data/favorites.json`.
+- **Download a local copy**: open a game's page and choose **Download SWF**. It downloads that library's existing file; it does not look up or fetch new games.
 - **Collections** (`/collections`): curated groups; click one to see just its games
 - **Grid/List toggle**: top-right button; list view also shows each game's description
 - **Theme toggle**: sun/moon icon, switches light/dark, remembered in your browser
@@ -197,9 +205,9 @@ The easiest way is the admin panel (`/admin`):
 
 ### Games that need WebGL
 
-The player defaults to Ruffle's 2D canvas renderer rather than WebGL, so in-game cover capture works reliably (WebGL's drawing buffer isn't guaranteed to persist between frames, and Ruffle doesn't expose a way to change that — a capture taken right after a WebGL frame renders can come out solid black). Most Flash games never notice the difference.
+The player defaults to Ruffle's automatic renderer selection for compatibility. The admin panel can force the 2D canvas renderer for a game when cover capture matters more than GPU-only features. WebGL's drawing buffer isn't guaranteed to persist between frames, so a cover capture from a WebGL-rendered game can come out solid black.
 
-Some do, though: anything using `BitmapData.draw()` needs a real GPU-backed renderer. Confirmed on *Canabalt*, which rendered a fully blank screen on canvas (`Render backend does not support BitmapData.draw` in the console every frame) and worked correctly once switched over. If a game you add shows a blank/black screen, check **Needs WebGL** for it in the admin panel — the trade-off is that in-game cover capture may stop working for that specific title, so consider setting its cover manually via upload instead.
+Some do, though: anything using `BitmapData.draw()` needs a GPU-backed renderer. Confirmed on *Canabalt*, which rendered a fully blank screen on canvas and worked correctly with automatic renderer selection. If a game you add shows a blank/black screen, enable **Needs WebGL** in the admin panel; in-game cover capture may stop working for that title, so upload its cover manually instead.
 
 ### Games that just won't run
 

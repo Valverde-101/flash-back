@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const fs = require("fs");
-const path = require("path");
+const { ADMIN_PATH } = require("./paths");
+const { writeJson } = require("./jsonStore");
 
-const ADMIN_PATH = path.join(__dirname, "..", "..", "data", "admin.json");
 const SESSION_COOKIE = "fgs_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -41,8 +41,7 @@ function createAdmin(username, password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const passwordHash = hashPassword(password, salt);
 
-  fs.mkdirSync(path.dirname(ADMIN_PATH), { recursive: true });
-  fs.writeFileSync(ADMIN_PATH, JSON.stringify({ username, salt, passwordHash }, null, 2) + "\n");
+  writeJson(ADMIN_PATH, { username, salt, passwordHash });
 }
 
 function verifyLogin(username, password) {

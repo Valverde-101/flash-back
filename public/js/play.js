@@ -4,6 +4,9 @@ const slug = params.get("slug");
 const titleEl = document.getElementById("game-title");
 const descEl = document.getElementById("game-description");
 const container = document.getElementById("player-container");
+const playerStatusEl = document.getElementById("player-status");
+const downloadGameBtn = document.getElementById("download-game-btn");
+const favoriteGameBtn = document.getElementById("favorite-game-btn");
 
 let player = null;
 
@@ -105,7 +108,19 @@ async function main() {
   descEl.textContent = game.description || "";
 
   currentGameFile = game.file;
+  downloadGameBtn.href = `/api/games/${encodeURIComponent(game.slug)}/download`;
+  downloadGameBtn.classList.remove("hidden");
+  await loadFavoriteSlugs();
+  const favoriteButton = createFavoriteButton(game.slug);
+  favoriteButton.classList.add("player-favorite");
+  favoriteGameBtn.replaceWith(favoriteButton);
   await loadSaveFromServer(currentProfileId);
+
+  if (!window.RufflePlayer || typeof window.RufflePlayer.newest !== "function") {
+    playerStatusEl.textContent = t("ruffle_missing");
+    playerStatusEl.classList.remove("hidden");
+    return;
+  }
 
   const ruffle = window.RufflePlayer.newest();
   player = ruffle.createPlayer();
@@ -113,35 +128,33 @@ async function main() {
   player.style.height = "100%";
   container.appendChild(player);
 
-  // Defaults to the 2D canvas renderer instead of WebGL. WebGL's drawing
-  // buffer isn't guaranteed to persist between frames (preserveDrawingBuffer
-  // is off by default, and Ruffle doesn't expose a way to turn it on), so a
-  // cover capture taken with canvas.toBlob() can come out solid black. The
-  // 2D canvas doesn't have this problem, and most Flash games don't need
-  // WebGL's extra rendering features.
-  //
-  // Some games genuinely do need it, though — anything using
-  // BitmapData.draw() (confirmed on Canabalt: forcing canvas rendered a
-  // fully blank screen, "Render backend does not support BitmapData.draw"
-  // every frame; switching to the default/auto-selected renderer fixed it
-  // completely). Reloading the movie with a different renderer just to
-  // capture a cover isn't an option either — that would reset the game back
-  // to its start, defeating the point of capturing whatever's currently on
-  // screen. So instead: `game.renderer === "auto"` is a per-game opt-out an
-  // admin can flip (see admin.js) for the rare game that needs it, at the
-  // cost of in-game cover capture possibly not working for that title.
-  //
   // `base` points relative loads inside the movie (some games fetch a
   // sidecar XML/data file next to their .swf at runtime) at this game's
   // own asset folder instead of the shared /games/ directory, so two
   // different games that both happen to load e.g. "data.xml" can't
   // collide. Empty by default — only populated if an admin uploads
   // something under "Extra files" for this game.
-  player.load({
-    url: `/games/${encodeURIComponent(game.file)}`,
-    ...(game.renderer === "auto" ? {} : { preferredRenderer: "canvas" }),
-    base: `${location.origin}/game-assets/${encodeURIComponent(game.slug)}/`,
+  player.addEventListener("loadedmetadata", () => {
+    playerStatusEl.classList.add("hidden");
+  }, { once: true });
+  player.addEventListener("error", () => {
+    playerStatusEl.textContent = t("game_play_error");
+    playerStatusEl.classList.remove("hidden");
   });
+  playerStatusEl.textContent = t("game_loading");
+  playerStatusEl.classList.remove("hidden");
+  try {
+    await player.load({
+      url: `/games/${encodeURIComponent(game.file)}`,
+      ...(game.renderer === "canvas" ? { preferredRenderer: "canvas" } : {}),
+      base: `${location.origin}/game-assets/${encodeURIComponent(game.slug)}/`,
+    });
+    playerStatusEl.classList.add("hidden");
+  } catch (error) {
+    playerStatusEl.textContent = t("game_play_error");
+    playerStatusEl.classList.remove("hidden");
+    return;
+  }
 
   initGamepad(game.slug);
 }
@@ -336,7 +349,13 @@ function pixelFilterFrame() {
   if (canvas && pixelFilterRenderer) {
     pixelFilterRenderer.render(canvas, currentPixelFilter);
   }
-  pixelFilterRafId = requestAnimationFrame(pixelFilterFrame);
+  pixelFilterRafId = document.visibilityState === "visible" ? requestAnimationFrame(pixelFilterFrame) : null;
+}
+
+function startPixelFilterLoop() {
+  if (currentPixelFilter !== "original" && !pixelFilterRafId && document.visibilityState === "visible") {
+    pixelFilterRafId = requestAnimationFrame(pixelFilterFrame);
+  }
 }
 
 function setPixelFilter(id) {
@@ -364,8 +383,17 @@ function setPixelFilter(id) {
   }
 
   pixelFilterCanvas.classList.remove("hidden");
-  if (!pixelFilterRafId) pixelFilterFrame();
+  startPixelFilterLoop();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && pixelFilterRafId) {
+    cancelAnimationFrame(pixelFilterRafId);
+    pixelFilterRafId = null;
+  } else {
+    startPixelFilterLoop();
+  }
+});
 
 pixelFilterSelect.addEventListener("change", () => setPixelFilter(pixelFilterSelect.value));
 

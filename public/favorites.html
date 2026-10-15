@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Favorites — FlashBack</title>
+  <link rel="icon" href="images/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="images/icon-192.png" />
+  <link rel="stylesheet" href="css/themes/dark.css" id="theme-link" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script>
+    (function () {
+      var saved = localStorage.getItem("flashback:theme");
+      if (saved) document.getElementById("theme-link").href = "css/themes/" + saved + ".css";
+    })();
+  </script>
+</head>
+<body data-favorites-only="true">
+  <header class="topbar">
+    <h1><a href="/" class="logo-link"><img src="images/logo.png" alt="FlashBack" class="site-logo" /></a></h1>
+    <nav class="main-nav">
+      <a href="/" data-i18n="nav_all_games">All games</a>
+      <a href="collections" data-i18n="nav_collections">Collections</a>
+      <a href="favorites" class="active" data-i18n="nav_favorites">Favorites</a>
+    </nav>
+    <input id="search" type="search" data-i18n-placeholder="search_placeholder" placeholder="Search game..." autocomplete="off" />
+    <button id="view-toggle" class="view-toggle-btn"></button>
+    <select id="lang-select" class="theme-select"></select>
+    <select id="theme-select" class="theme-select"></select>
+  </header>
+  <main>
+    <div id="grid" class="grid"></div>
+    <p id="empty" class="empty hidden" data-i18n="empty_favorites">No favorites saved yet.</p>
+    <p id="library-status" class="library-status hidden" role="status"></p>
+    <button id="load-more" class="load-more-btn hidden" type="button" data-i18n="load_more">Load more</button>
+  </main>
+  <footer class="footer">
+    <p><a href="admin" data-i18n="admin_link">Administration</a></p>
+  </footer>
+  <script src="js/icons.js"></script>
+  <script src="js/themes-registry.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/viewToggle.js"></script>
+  <script src="js/favoriteStore.js"></script>
+  <script src="js/gameCards.js"></script>
+  <script src="js/library.js"></script>
+</body>
+</html>

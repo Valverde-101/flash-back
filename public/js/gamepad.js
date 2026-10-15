@@ -74,6 +74,7 @@ function createGamepadController(gameSlug, targetEl) {
   let running = false;
   let rafId = null;
   const heldState = {};
+  let lastPadId = null;
   let listenButtonCallback = null;
   let onConnectionChange = null;
 
@@ -95,7 +96,15 @@ function createGamepadController(gameSlug, targetEl) {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = pads && Array.from(pads).find((p) => p);
 
-    if (onConnectionChange) onConnectionChange(pad ? pad.id : null);
+    const padId = pad ? pad.id : null;
+    if (padId !== lastPadId) {
+      for (const action of GAMEPAD_ACTIONS) {
+        if (heldState[action]) dispatchKey("keyup", mapping[action].key);
+        heldState[action] = false;
+      }
+      lastPadId = padId;
+      if (onConnectionChange) onConnectionChange(padId);
+    }
 
     if (pad) {
       if (listenButtonCallback) {
@@ -132,6 +141,10 @@ function createGamepadController(gameSlug, targetEl) {
       running = false;
       if (rafId) cancelAnimationFrame(rafId);
       rafId = null;
+      for (const action of GAMEPAD_ACTIONS) {
+        if (heldState[action]) dispatchKey("keyup", mapping[action].key);
+        heldState[action] = false;
+      }
     },
     getMapping() {
       return mapping;

@@ -6,52 +6,6 @@ const descEl = document.getElementById("collection-description");
 const grid = document.getElementById("grid");
 const emptyMsg = document.getElementById("empty");
 
-function hashHue(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash) % 360;
-}
-
-function buildCard(game) {
-  const card = document.createElement("a");
-  card.className = "card";
-  card.href = `play?slug=${encodeURIComponent(game.slug)}`;
-
-  const cover = document.createElement("div");
-  cover.className = "card-cover";
-
-  if (game.cover) {
-    cover.classList.add("has-image");
-    const img = document.createElement("img");
-    img.src = `covers/${game.slug}.${game.cover}?v=${game.coverVersion || 0}`;
-    img.alt = game.title;
-    cover.appendChild(img);
-  } else {
-    const hue = hashHue(game.slug);
-    cover.style.setProperty("--hue1", `hsl(${hue}, 70%, 55%)`);
-    cover.style.setProperty("--hue2", `hsl(${(hue + 60) % 360}, 70%, 55%)`);
-    cover.textContent = game.title.slice(0, 1).toUpperCase();
-  }
-
-  const title = document.createElement("div");
-  title.className = "card-title";
-  title.textContent = game.title;
-
-  card.appendChild(cover);
-  card.appendChild(title);
-
-  if (game.description) {
-    const desc = document.createElement("div");
-    desc.className = "card-description";
-    desc.textContent = game.description;
-    card.appendChild(desc);
-  }
-
-  return card;
-}
-
 async function main() {
   if (!slug) {
     titleEl.textContent = t("collection_not_specified");
@@ -65,14 +19,15 @@ async function main() {
   }
 
   const collection = await res.json();
+  await loadFavoriteSlugs();
   titleEl.textContent = collection.name;
   document.title = `${collection.name} — FlashBack`;
   descEl.textContent = collection.description || "";
 
   emptyMsg.classList.toggle("hidden", collection.games.length > 0);
   for (const game of collection.games) {
-    grid.appendChild(buildCard(game));
-  }
+    grid.appendChild(buildGameCard(game));
+}
 }
 
 document.getElementById("back-link").innerHTML = iconSvg("arrow-left") + " " + t("nav_collections");

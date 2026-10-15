@@ -24,7 +24,10 @@
     <nav class="main-nav">
       <a href="/" data-i18n="nav_all_games">All games</a>
       <a href="collections" data-i18n="nav_collections">Collections</a>
+      <a href="favorites" data-i18n="nav_favorites">Favorites</a>
     </nav>
+    <button id="favorite-game-btn" class="favorite-toggle player-favorite" type="button" data-i18n-title="favorite_add" title="Add to favorites" aria-pressed="false"></button>
+    <a id="download-game-btn" class="crt-btn download-game-btn hidden" data-i18n="download_swf" download>Download SWF</a>
     <button id="capture-cover-btn" class="crt-btn" data-i18n-title="capture_cover_title" title="Capture a screenshot from the game as its cover"></button>
     <button id="gamepad-config-btn" class="crt-btn" data-i18n-title="gamepad_config_title" title="Configure gamepad"></button>
     <button id="crt-btn" class="crt-btn" data-i18n-title="crt_effect_title" title="CRT effect"></button>
@@ -40,6 +43,7 @@
       <canvas id="pixel-filter-canvas" class="pixel-filter-canvas hidden"></canvas>
       <div class="crt-overlay"></div>
     </div>
+    <p id="player-status" class="library-status hidden" role="status"></p>
     <p id="game-description" class="game-description"></p>
   </main>
 
@@ -64,6 +68,7 @@
   <script src="js/themes-registry.js"></script>
   <script src="js/theme.js"></script>
   <script src="js/i18n.js"></script>
+  <script src="js/favoriteStore.js"></script>
   <script src="js/profiles.js"></script>
   <script src="js/pixelfilters.js"></script>
   <script src="js/gamepad.js"></script>

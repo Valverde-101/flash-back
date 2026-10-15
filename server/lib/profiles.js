@@ -9,18 +9,18 @@
 const fs = require("fs");
 const path = require("path");
 const { slugify } = require("./slugify");
+const { PROFILES_PATH, SAVES_DIR } = require("./paths");
+const { readJson, writeJson } = require("./jsonStore");
 
-const PROFILES_PATH = path.join(__dirname, "..", "..", "data", "profiles.json");
-const SAVES_DIR = path.join(__dirname, "..", "..", "data", "saves");
+const isProfileList = (value) => Array.isArray(value);
+const isValidId = (value) => typeof value === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 
 function loadProfiles() {
-  if (!fs.existsSync(PROFILES_PATH)) return [];
-  return JSON.parse(fs.readFileSync(PROFILES_PATH, "utf-8"));
+  return readJson(PROFILES_PATH, [], isProfileList);
 }
 
 function saveProfiles(profiles) {
-  fs.mkdirSync(path.dirname(PROFILES_PATH), { recursive: true });
-  fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2) + "\n");
+  writeJson(PROFILES_PATH, profiles);
 }
 
 function uniqueId(existingIds, baseId) {
@@ -33,9 +33,10 @@ function uniqueId(existingIds, baseId) {
 
 function createProfile(name) {
   const profiles = loadProfiles();
+  const baseId = slugify(name) || "player";
   const id = uniqueId(
     profiles.map((p) => p.id),
-    slugify(name)
+    baseId
   );
   const profile = { id, name };
   profiles.push(profile);
@@ -44,6 +45,7 @@ function createProfile(name) {
 }
 
 function deleteProfile(id) {
+  if (!isValidId(id)) return false;
   const profiles = loadProfiles();
   const index = profiles.findIndex((p) => p.id === id);
   if (index === -1) return false;
@@ -55,10 +57,14 @@ function deleteProfile(id) {
 }
 
 function profileExists(id) {
+  if (!isValidId(id)) return false;
   return loadProfiles().some((p) => p.id === id);
 }
 
 function savePath(profileId, gameSlug) {
+  if (!isValidId(profileId) || !isValidId(gameSlug)) {
+    throw new Error("Invalid profile or game identifier");
+  }
   return path.join(SAVES_DIR, profileId, `${gameSlug}.json`);
 }
 
@@ -68,13 +74,15 @@ function savePath(profileId, gameSlug) {
 function getSave(profileId, gameSlug) {
   const file = savePath(profileId, gameSlug);
   if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, "utf-8"));
+  return readJson(file, null, (value) => value && typeof value === "object" && !Array.isArray(value));
 }
 
 function putSave(profileId, gameSlug, data) {
   const file = savePath(profileId, gameSlug);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data));
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Invalid save data");
+  }
+  writeJson(file, data);
 }
 
 module.exports = {

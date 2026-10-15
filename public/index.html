@@ -16,12 +16,13 @@
     })();
   </script>
 </head>
-<body>
+<body data-favorites-only="false">
   <header class="topbar">
     <h1><a href="/" class="logo-link"><img src="images/logo.png" alt="FlashBack" class="site-logo" /></a></h1>
     <nav class="main-nav">
       <a href="/" class="active" data-i18n="nav_all_games">All games</a>
       <a href="collections" data-i18n="nav_collections">Collections</a>
+      <a href="favorites" data-i18n="nav_favorites">Favorites</a>
     </nav>
     <input id="search" type="search" data-i18n-placeholder="search_placeholder" placeholder="Search game..." autocomplete="off" />
     <button id="view-toggle" class="view-toggle-btn"></button>
@@ -34,6 +35,8 @@
 
     <div id="grid" class="grid"></div>
     <p id="empty" class="empty hidden" data-i18n="empty_games">No games found.</p>
+    <p id="library-status" class="library-status hidden" role="status"></p>
+    <button id="load-more" class="load-more-btn hidden" type="button" data-i18n="load_more">Load more</button>
   </main>
 
   <footer class="footer">
@@ -46,6 +49,8 @@
   <script src="js/theme.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/viewToggle.js"></script>
+  <script src="js/favoriteStore.js"></script>
+  <script src="js/gameCards.js"></script>
   <script src="js/library.js"></script>
 </body>
 </html>

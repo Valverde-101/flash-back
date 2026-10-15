@@ -9,6 +9,8 @@ data/collections.json
 data/profiles.json
 data/saves/
 data/game-assets/
+data/favorites.json
+data/*.json.bak
 *.log
 .env
 volumes/
