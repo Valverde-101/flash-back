@@ -53,7 +53,7 @@ function updateVolumeControls() {
   volumeSlider.value = String(percentage);
   volumeValueEl.value = `${percentage}%`;
   volumeValueEl.textContent = `${percentage}%`;
-  volumeToggleBtn.innerHTML = iconSvg(muted ? "volume-x" : "volume-2");
+  volumeToggleBtn.innerHTML = `${iconSvg(muted ? "volume-x" : "volume-2")}<span>${t("game_volume_label")}</span>`;
   volumeToggleBtn.setAttribute("aria-expanded", String(panelIsOpen));
   volumeToggleBtn.disabled = !gameVolumeAvailable;
   volumeSlider.disabled = !gameVolumeAvailable;

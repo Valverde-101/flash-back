@@ -31,6 +31,17 @@
     <a id="download-game-btn" class="crt-btn download-game-btn hidden" data-i18n="download_swf" data-i18n-title="download_swf_title" title="Downloads only the SWF file; extra game files are separate." download>Download SWF</a>
     <button id="capture-cover-btn" class="crt-btn" data-i18n-title="capture_cover_title" title="Capture a screenshot from the game as its cover"></button>
     <button id="gamepad-config-btn" class="crt-btn" data-i18n-title="gamepad_config_title" title="Configure gamepad"></button>
+    <div class="volume-control">
+      <button id="volume-toggle" class="crt-btn volume-toggle" type="button" aria-controls="volume-panel" aria-expanded="false" data-i18n-title="game_volume_open" title="Adjust game volume" aria-label="Adjust game volume"></button>
+      <div id="volume-panel" class="volume-panel" hidden>
+        <label for="volume-slider">
+          <span data-i18n="game_volume_label">Game volume</span>
+          <output id="volume-value" for="volume-slider">100%</output>
+        </label>
+        <input id="volume-slider" class="volume-slider" type="range" min="0" max="100" step="1" value="100" data-i18n-title="game_volume_slider" title="Game volume" aria-label="Game volume" />
+        <button id="volume-mute-btn" class="volume-mute-btn" type="button" data-i18n="game_volume_mute">Mute</button>
+      </div>
+    </div>
     <button id="crt-btn" class="crt-btn" data-i18n-title="crt_effect_title" title="CRT effect"></button>
     <select id="pixel-filter-select" class="theme-select" data-i18n-title="pixel_filter_title" title="Pixel filter"></select>
     <button id="fullscreen-btn" class="fullscreen-btn" data-i18n-title="fullscreen_title" title="Fullscreen"></button>
@@ -43,17 +54,6 @@
     <div id="player-container" class="player-container">
       <canvas id="pixel-filter-canvas" class="pixel-filter-canvas hidden"></canvas>
       <div class="crt-overlay"></div>
-      <div class="volume-control">
-        <button id="volume-toggle" class="volume-toggle" type="button" aria-controls="volume-panel" aria-expanded="false" data-i18n-title="game_volume_open" title="Adjust game volume" aria-label="Adjust game volume"></button>
-        <div id="volume-panel" class="volume-panel" hidden>
-          <label for="volume-slider">
-            <span data-i18n="game_volume_label">Game volume</span>
-            <output id="volume-value" for="volume-slider">100%</output>
-          </label>
-          <input id="volume-slider" type="range" min="0" max="100" step="1" value="100" data-i18n-title="game_volume_slider" title="Game volume" aria-label="Game volume" />
-          <button id="volume-mute-btn" class="volume-mute-btn" type="button" data-i18n="game_volume_mute">Mute</button>
-        </div>
-      </div>
     </div>
     <p id="player-status" class="library-status hidden" role="status"></p>
     <p id="game-description" class="game-description"></p>
