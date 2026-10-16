@@ -8,9 +8,132 @@ const container = document.getElementById("player-container");
 const playerStatusEl = document.getElementById("player-status");
 const downloadGameBtn = document.getElementById("download-game-btn");
 const favoriteGameBtn = document.getElementById("favorite-game-btn");
+const volumeControl = document.querySelector(".volume-control");
+const volumeToggleBtn = document.getElementById("volume-toggle");
+const volumePanel = document.getElementById("volume-panel");
+const volumeSlider = document.getElementById("volume-slider");
+const volumeValueEl = document.getElementById("volume-value");
+const volumeMuteBtn = document.getElementById("volume-mute-btn");
 
 let player = null;
 let currentGameSource = null;
+let currentGameVolume = 1;
+let lastAudibleGameVolume = 1;
+let gameVolumeAvailable = true;
+
+function gameVolumeStorageKeys() {
+  const gameKey = encodeURIComponent(slug || "unknown");
+  return {
+    volume: `flashback:game-volume:${gameKey}`,
+    lastAudible: `flashback:game-volume-last-audible:${gameKey}`,
+  };
+}
+
+function normalizedVolume(value, fallback = 1) {
+  const volume = Number(value);
+  return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : fallback;
+}
+
+function readGameVolumePreferences() {
+  const keys = gameVolumeStorageKeys();
+  const savedVolume = localStorage.getItem(keys.volume);
+  const savedLastAudible = localStorage.getItem(keys.lastAudible);
+  currentGameVolume = savedVolume === null ? 1 : normalizedVolume(savedVolume);
+  lastAudibleGameVolume = currentGameVolume > 0
+    ? currentGameVolume
+    : normalizedVolume(savedLastAudible, 1);
+  if (lastAudibleGameVolume === 0) lastAudibleGameVolume = 1;
+}
+
+function updateVolumeControls() {
+  if (!volumeToggleBtn || !volumePanel || !volumeSlider || !volumeValueEl || !volumeMuteBtn) return;
+  const percentage = Math.round(currentGameVolume * 100);
+  const panelIsOpen = !volumePanel.hidden;
+  const muted = currentGameVolume === 0;
+  volumeSlider.value = String(percentage);
+  volumeValueEl.value = `${percentage}%`;
+  volumeValueEl.textContent = `${percentage}%`;
+  volumeToggleBtn.innerHTML = iconSvg(muted ? "volume-x" : "volume-2");
+  volumeToggleBtn.setAttribute("aria-expanded", String(panelIsOpen));
+  volumeToggleBtn.disabled = !gameVolumeAvailable;
+  volumeSlider.disabled = !gameVolumeAvailable;
+  volumeMuteBtn.disabled = !gameVolumeAvailable;
+  volumeMuteBtn.textContent = t(muted ? "game_volume_unmute" : "game_volume_mute");
+  volumeToggleBtn.title = gameVolumeAvailable
+    ? t(panelIsOpen ? "game_volume_close" : "game_volume_open")
+    : t("game_volume_unavailable");
+  volumeToggleBtn.setAttribute("aria-label", volumeToggleBtn.title);
+  volumeSlider.setAttribute("aria-valuetext", t("game_volume_level", { n: percentage }));
+}
+
+function getRuffleVolumeApi() {
+  if (!player) return null;
+  try {
+    return typeof player.ruffle === "function" ? player.ruffle() : player;
+  } catch (error) {
+    return player;
+  }
+}
+
+function applyGameVolume(volume, persist = true) {
+  currentGameVolume = normalizedVolume(volume);
+  if (currentGameVolume > 0) lastAudibleGameVolume = currentGameVolume;
+
+  if (persist) {
+    const keys = gameVolumeStorageKeys();
+    localStorage.setItem(keys.volume, String(currentGameVolume));
+    if (currentGameVolume > 0) localStorage.setItem(keys.lastAudible, String(currentGameVolume));
+  }
+
+  if (player) {
+    const api = getRuffleVolumeApi();
+    if (!api || !("volume" in api)) {
+      gameVolumeAvailable = false;
+    } else {
+      try {
+        api.volume = currentGameVolume;
+      } catch (error) {
+        gameVolumeAvailable = false;
+      }
+    }
+  }
+  updateVolumeControls();
+}
+
+function initVolumeControl() {
+  if (!volumeControl || !volumeToggleBtn || !volumePanel || !volumeSlider || !volumeMuteBtn) return;
+  readGameVolumePreferences();
+  updateVolumeControls();
+
+  volumeToggleBtn.addEventListener("click", () => {
+    volumePanel.hidden = !volumePanel.hidden;
+    updateVolumeControls();
+    if (!volumePanel.hidden) volumeSlider.focus();
+  });
+
+  volumeSlider.addEventListener("input", () => {
+    applyGameVolume(Number(volumeSlider.value) / 100);
+  });
+
+  volumeMuteBtn.addEventListener("click", () => {
+    applyGameVolume(currentGameVolume === 0 ? lastAudibleGameVolume : 0);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!volumeControl.contains(event.target) && !volumePanel.hidden) {
+      volumePanel.hidden = true;
+      updateVolumeControls();
+    }
+  });
+
+  volumeControl.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !volumePanel.hidden) {
+      volumePanel.hidden = true;
+      updateVolumeControls();
+      volumeToggleBtn.focus();
+    }
+  });
+}
 
 function renderGameSource(source) {
   currentGameSource = source || null;
@@ -160,6 +283,7 @@ async function main() {
   player.style.width = "100%";
   player.style.height = "100%";
   container.appendChild(player);
+  applyGameVolume(currentGameVolume, false);
 
   // `base` points relative loads inside the movie (some games fetch a
   // sidecar XML/data file next to their .swf at runtime) at this game's
@@ -536,6 +660,7 @@ updateCaptureCoverBtn();
 setCrt(localStorage.getItem(CRT_STORAGE_KEY) === "1");
 populatePixelFilterSelect();
 setPixelFilter(localStorage.getItem(FILTER_STORAGE_KEY) || "original");
+initVolumeControl();
 updateGamepadConfigBtn();
 
 function onLanguageChange() {
@@ -545,6 +670,7 @@ function onLanguageChange() {
   updateCaptureCoverBtn();
   crtBtn.innerHTML = iconSvg("monitor") + " " + t("crt_button");
   populatePixelFilterSelect();
+  updateVolumeControls();
   updateGamepadConfigBtn();
   if (!gamepadPanel.classList.contains("hidden")) renderGamepadRows();
 }

@@ -43,6 +43,17 @@
     <div id="player-container" class="player-container">
       <canvas id="pixel-filter-canvas" class="pixel-filter-canvas hidden"></canvas>
       <div class="crt-overlay"></div>
+      <div class="volume-control">
+        <button id="volume-toggle" class="volume-toggle" type="button" aria-controls="volume-panel" aria-expanded="false" data-i18n-title="game_volume_open" title="Adjust game volume" aria-label="Adjust game volume"></button>
+        <div id="volume-panel" class="volume-panel" hidden>
+          <label for="volume-slider">
+            <span data-i18n="game_volume_label">Game volume</span>
+            <output id="volume-value" for="volume-slider">100%</output>
+          </label>
+          <input id="volume-slider" type="range" min="0" max="100" step="1" value="100" data-i18n-title="game_volume_slider" title="Game volume" aria-label="Game volume" />
+          <button id="volume-mute-btn" class="volume-mute-btn" type="button" data-i18n="game_volume_mute">Mute</button>
+        </div>
+      </div>
     </div>
     <p id="player-status" class="library-status hidden" role="status"></p>
     <p id="game-description" class="game-description"></p>

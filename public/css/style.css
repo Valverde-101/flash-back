@@ -507,6 +507,106 @@ main {
   height: 100%;
 }
 
+.volume-control {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 7;
+}
+
+.volume-toggle {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: var(--radius);
+  background: rgba(8, 10, 18, 0.78);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.volume-toggle:hover,
+.volume-toggle:focus-visible,
+.volume-toggle[aria-expanded="true"] {
+  border-color: var(--accent2);
+  background: rgba(8, 10, 18, 0.96);
+  transform: translateY(-1px);
+}
+
+.volume-toggle:focus-visible,
+.volume-slider:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+
+.volume-toggle .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.volume-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  width: min(250px, calc(100vw - 36px));
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+.volume-panel[hidden] {
+  display: none;
+}
+
+.volume-panel label {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.volume-panel output {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.volume-slider {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 2px 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.volume-mute-btn {
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.volume-mute-btn:hover {
+  border-color: var(--accent2);
+}
+
 .player-container:fullscreen {
   aspect-ratio: unset;
   border-radius: 0;
